@@ -1,38 +1,103 @@
-.App {
-  text-align: center;
-}
-
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
-}
-
-.App-header {
-  background-color: #282c34;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
-}
-
-.App-link {
-  color: #61dafb;
-}
-
-@keyframes App-logo-spin {
+@keyframes slide-in {
   from {
-    transform: rotate(0deg);
+    transform: translateX(100%);
+    opacity: 0;
   }
   to {
-    transform: rotate(360deg);
+    transform: translateX(0);
+    opacity: 1;
   }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.3s ease-out;
+}
+
+.signal-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: .5;
+  }
+}
+
+/* JM Trading Services Brand Colors */
+:root {
+  --jm-primary-deep: #1e40af;
+  --jm-primary-bright: #3b82f6;
+  --jm-primary-sky: #60a5fa;
+  --jm-gradient-primary: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+  --jm-gradient-hover: linear-gradient(135deg, #1a3a9f 0%, #3575e0 100%);
+  
+  /* Override default blue colors with JM brand colors */
+  --color-primary: #1e40af;
+  --color-primary-hover: #1a3a9f;
+  --color-accent: #3b82f6;
+}
+
+/* Custom scrollbar with JM brand colors */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f0f4ff;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3b82f6;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #1e40af;
+}
+
+/* JM Brand Button Styles */
+.jm-button-primary {
+  background: var(--jm-gradient-primary);
+  color: white;
+  border: none;
+  padding: 0.5rem 2rem;
+  border-radius: 8px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.jm-button-primary:hover {
+  background: var(--jm-gradient-hover);
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.12);
+  transform: translateY(-1px);
+}
+
+/* Update focus colors */
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--jm-primary-bright) !important;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1) !important;
+}
+
+/* Update link colors */
+a {
+  color: var(--jm-primary-bright);
+}
+
+a:hover {
+  color: var(--jm-primary-deep);
+}
+
+/* High impact scores with JM gradient */
+.high-niss-score {
+  background: var(--jm-gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: bold;
 }
