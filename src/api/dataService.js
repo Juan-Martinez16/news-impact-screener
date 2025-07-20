@@ -1,3 +1,4 @@
+// src/api/dataService.js
 import { API_CONFIG } from "./config";
 
 class DataService {
@@ -21,6 +22,171 @@ class DataService {
       console.error(`Error fetching ${cacheKey}:`, error);
       throw error;
     }
+  }
+
+  // Expanded institutional stock universe across multiple markets
+  getInstitutionalStocks() {
+    return {
+      // US Large Cap Tech
+      usTech: [
+        "AAPL",
+        "MSFT",
+        "GOOGL",
+        "AMZN",
+        "META",
+        "NVDA",
+        "AMD",
+        "INTC",
+        "CRM",
+        "ADBE",
+      ],
+
+      // US Large Cap Non-Tech
+      usLargeCap: [
+        "JPM",
+        "JNJ",
+        "PG",
+        "UNH",
+        "HD",
+        "V",
+        "MA",
+        "WMT",
+        "PFE",
+        "KO",
+      ],
+
+      // US Growth & Momentum
+      usGrowth: [
+        "TSLA",
+        "NFLX",
+        "SHOP",
+        "SQ",
+        "ROKU",
+        "ZOOM",
+        "PELOTON",
+        "TWTR",
+        "SNAP",
+        "UBER",
+      ],
+
+      // US Biotech & Healthcare
+      usBiotech: [
+        "MRNA",
+        "BNTX",
+        "VKTX",
+        "GILD",
+        "AMGN",
+        "BMY",
+        "ABBV",
+        "LLY",
+        "TMO",
+        "DHR",
+      ],
+
+      // US Financial
+      usFinancial: [
+        "BAC",
+        "WFC",
+        "C",
+        "GS",
+        "MS",
+        "AXP",
+        "BRK.B",
+        "BLK",
+        "SPGI",
+        "CME",
+      ],
+
+      // US Energy & Materials
+      usEnergy: [
+        "XOM",
+        "CVX",
+        "COP",
+        "EOG",
+        "SLB",
+        "HAL",
+        "DVN",
+        "MRO",
+        "OKE",
+        "KMI",
+      ],
+
+      // US Small/Mid Cap High Beta
+      usSmallCap: [
+        "PLTR",
+        "SMCI",
+        "RIVN",
+        "LCID",
+        "SOFI",
+        "HOOD",
+        "COIN",
+        "RBLX",
+        "U",
+        "DKNG",
+      ],
+
+      // US REITs & Utilities
+      usREITs: [
+        "AMT",
+        "PLD",
+        "CCI",
+        "EQIX",
+        "SPG",
+        "O",
+        "WELL",
+        "DLR",
+        "PSA",
+        "EXR",
+      ],
+
+      // International Markets (ADRs)
+      international: [
+        "TSM",
+        "ASML",
+        "TM",
+        "NVO",
+        "NESN",
+        "SAP",
+        "AZN",
+        "TTE",
+        "UL",
+        "SNY",
+      ],
+
+      // ETFs for Market Exposure
+      etfs: [
+        "SPY",
+        "QQQ",
+        "IWM",
+        "EFA",
+        "EEM",
+        "VTI",
+        "BND",
+        "GLD",
+        "SLV",
+        "USO",
+      ],
+
+      // Crypto Related
+      crypto: [
+        "BTC-USD",
+        "ETH-USD",
+        "COIN",
+        "MSTR",
+        "RIOT",
+        "MARA",
+        "HUT",
+        "BITF",
+        "CAN",
+        "HIVE",
+      ],
+    };
+  }
+
+  // Get all stocks for institutional screening
+  getAllStocksForScreening() {
+    const stocks = this.getInstitutionalStocks();
+    return Object.values(stocks).flat();
   }
 
   async getQuote(symbol) {
@@ -86,6 +252,12 @@ class DataService {
       "profit",
       "up",
       "surge",
+      "rally",
+      "bullish",
+      "outperform",
+      "buy",
+      "target raised",
+      "optimistic",
     ];
     const negativeWords = [
       "miss",
@@ -101,6 +273,12 @@ class DataService {
       "down",
       "plunge",
       "drop",
+      "bearish",
+      "sell",
+      "target lowered",
+      "pessimistic",
+      "warning",
+      "disappointing",
     ];
 
     const textLower = text.toLowerCase();
@@ -115,10 +293,12 @@ class DataService {
     return (positiveCount - negativeCount) / (positiveCount + negativeCount);
   }
 
+  // ENHANCED NISS Calculation - Fixed to handle negative scores properly
   calculateNISS(quote, news) {
     if (!quote) return 0;
 
-    const priceChange = Math.abs(quote.changePercent);
+    // CRITICAL FIX: Use actual price change (not absolute value) to preserve direction
+    const priceChange = quote.changePercent || 0; // This preserves positive/negative
     const newsCount = news.length;
     const recentNews = news.filter(
       (n) => Date.now() - n.datetime * 1000 < 86400000
@@ -129,13 +309,25 @@ class DataService {
           news.length
         : 0;
 
-    // Enhanced NISS calculation
-    const priceScore = priceChange * 10;
+    // Enhanced NISS calculation that can go negative
+    const priceScore = priceChange * 10; // Preserves sign (+/-)
     const newsScore = newsCount * 5;
     const recencyScore = recentNews * 10;
-    const sentimentScore = avgSentiment * 50;
+    const sentimentScore = avgSentiment * 50; // Can be negative
 
-    return Math.round(priceScore + newsScore + recencyScore + sentimentScore);
+    // Final NISS score - can range from highly negative to highly positive
+    let nissScore = priceScore + newsScore + recencyScore + sentimentScore;
+
+    // Apply directional bias based on sentiment and price action
+    if (priceChange < -2 && avgSentiment < -0.3) {
+      // Strong negative bias
+      nissScore = nissScore - Math.abs(nissScore * 0.5);
+    } else if (priceChange > 2 && avgSentiment > 0.3) {
+      // Strong positive bias
+      nissScore = nissScore + Math.abs(nissScore * 0.2);
+    }
+
+    return Math.round(nissScore);
   }
 
   async getStockData(symbol) {
@@ -152,6 +344,50 @@ class DataService {
       news,
       nissScore,
     };
+  }
+
+  // NEW: Get multiple stocks efficiently with batching
+  async getMultipleStockData(symbols, batchSize = 10) {
+    const results = [];
+
+    // Process in batches to avoid API rate limits
+    for (let i = 0; i < symbols.length; i += batchSize) {
+      const batch = symbols.slice(i, i + batchSize);
+      const promises = batch.map((symbol) => this.getStockData(symbol));
+
+      try {
+        const batchResults = await Promise.allSettled(promises);
+
+        batchResults.forEach((result, index) => {
+          if (result.status === "fulfilled" && result.value.quote) {
+            results.push(result.value);
+          } else {
+            console.warn(`Failed to fetch data for ${batch[index]}`);
+          }
+        });
+
+        // Small delay between batches to respect rate limits
+        if (i + batchSize < symbols.length) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      } catch (error) {
+        console.error(`Error fetching batch starting at index ${i}:`, error);
+      }
+    }
+
+    return results;
+  }
+
+  // NEW: Get institutional screening data
+  async getInstitutionalScreeningData(maxStocks = 50) {
+    const allStocks = this.getAllStocksForScreening();
+
+    // Take a subset for initial screening to manage API calls
+    const stocksToScreen = allStocks.slice(0, maxStocks);
+
+    console.log(`Screening ${stocksToScreen.length} institutional stocks...`);
+
+    return await this.getMultipleStockData(stocksToScreen);
   }
 }
 
