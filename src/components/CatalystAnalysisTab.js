@@ -240,144 +240,74 @@ const CatalystAnalysisTab = ({
   const processedCatalysts = useMemo(() => {
     const catalysts = [];
 
-    // Process screening results if available
-    screeningResults.forEach((stock) => {
-      // FIXED: Correct destructuring to match the actual data structure
-      const {
-        symbol,
-        nissScore,
-        nissData,
-        tradeSetup,
-        quote,
-        news = [],
-        sector,
-        company,
-      } = stock;
+    // Process screening results if available (from InstitutionalDataService)
+    if (screeningResults && screeningResults.length > 0) {
+      screeningResults.forEach((stock) => {
+        // Enhanced destructuring to handle InstitutionalDataService structure
+        const {
+          symbol,
+          nissScore = 0,
+          nissData = {},
+          tradeSetup = {},
+          quote = {},
+          news = [],
+          sector = "Unknown",
+          company,
+        } = stock;
 
-      // Create catalyst entries for each significant news item
-      news.slice(0, 3).forEach((newsItem, index) => {
-        const catalyst = {
-          id: `${symbol}-${index}`,
-          ticker: symbol,
-          company: company || getCompanyName(symbol),
-          sector: sector || "Unknown",
-          event: categorizeNewsEvent(newsItem),
-          headline: newsItem.headline || newsItem.title,
-          source: newsItem.source,
-          publishedAt: newsItem.datetime
-            ? new Date(newsItem.datetime * 1000)
-            : new Date(),
-          sentiment: newsItem.sentiment || 0,
-
-          // FIXED: Core Analysis - now correctly using the NISS score
-          nissScore: nissScore || 0, // This was the main issue!
-          confidence:
-            nissData?.confidence || determineConfidence(nissScore || 0),
-          currentPrice: quote?.price || 0,
-          changePercent: quote?.changePercent || 0,
-          volume: quote?.volume || 0,
-          avgVolume: quote?.avgVolume || quote?.volume || 0,
-
-          // Impact Assessment
-          expectedImpact: calculateExpectedImpact(
-            newsItem,
-            nissScore || 0, // FIXED: Use nissScore directly
-            quote?.changePercent
-          ),
-          probability: calculateProbability(
-            nissData?.confidence,
-            newsItem.sentiment
-          ),
-          timeframe: getEventTimeframe(newsItem),
-
-          // Trading Setup
-          signal: tradeSetup?.action || determineSignal(nissScore || 0), // FIXED
-          entry: tradeSetup?.entry || quote?.price,
-          stopLoss: tradeSetup?.stopLoss,
-          targets: tradeSetup?.targets || [],
-          riskReward: tradeSetup?.riskReward || 0,
-
-          // Key Metrics (simplified)
-          volumeRatio:
-            quote?.volume && quote?.avgVolume
-              ? (quote.volume / quote.avgVolume).toFixed(1)
-              : "1.0",
-          pricePosition: calculatePricePosition(quote),
-
-          // News Quality Metrics
-          sourceCredibility: getSourceCredibility(newsItem.source),
-          breakingNews: isBreakingNews(newsItem),
-          marketRelevance: calculateMarketRelevance(newsItem, sector),
-
-          // Additional context
-          url: newsItem.url,
-          related: newsItem.related || [],
-        };
-
-        catalysts.push(catalyst);
-      });
-    });
-
-    // ALSO PROCESS stockData for additional context if needed
-    Object.entries(stockData).forEach(([symbol, data]) => {
-      // Only add if not already in screeningResults
-      const existsInScreening = screeningResults.some(
-        (s) => s.symbol === symbol
-      );
-      if (!existsInScreening && data.news && data.news.length > 0) {
-        // Add stocks from stockData that aren't in screeningResults
-        data.news.slice(0, 2).forEach((newsItem, index) => {
+        // Create catalyst entries for each significant news item
+        news.slice(0, 3).forEach((newsItem, index) => {
           const catalyst = {
-            id: `${symbol}-legacy-${index}`,
+            id: `${symbol}-${index}`,
             ticker: symbol,
-            company: getCompanyName(symbol),
-            sector: data.sector || "Unknown",
+            company: company || getCompanyName(symbol),
+            sector: sector,
             event: categorizeNewsEvent(newsItem),
-            headline: newsItem.headline || newsItem.title,
-            source: newsItem.source,
+            headline: newsItem.headline || newsItem.title || "No headline",
+            source: newsItem.source || "Unknown",
             publishedAt: newsItem.datetime
               ? new Date(newsItem.datetime * 1000)
               : new Date(),
             sentiment: newsItem.sentiment || 0,
 
-            // Use legacy data structure
-            nissScore: data.nissScore || 0,
-            confidence: determineConfidence(data.nissScore || 0),
-            currentPrice: data.quote?.price || 0,
-            changePercent: data.quote?.changePercent || 0,
-            volume: data.quote?.volume || 0,
-            avgVolume: data.quote?.avgVolume || data.quote?.volume || 0,
+            // Core Analysis - using InstitutionalDataService data
+            nissScore: nissScore,
+            confidence: nissData?.confidence || determineConfidence(nissScore),
+            currentPrice: quote?.price || 0,
+            changePercent: quote?.changePercent || 0,
+            volume: quote?.volume || 0,
+            avgVolume: quote?.avgVolume || quote?.volume || 0,
 
             // Impact Assessment
             expectedImpact: calculateExpectedImpact(
               newsItem,
-              data.nissScore || 0,
-              data.quote?.changePercent
+              nissScore,
+              quote?.changePercent
             ),
             probability: calculateProbability(
-              determineConfidence(data.nissScore || 0),
+              nissData?.confidence,
               newsItem.sentiment
             ),
             timeframe: getEventTimeframe(newsItem),
 
-            // Trading Setup
-            signal: determineSignal(data.nissScore || 0),
-            entry: data.quote?.price,
-            stopLoss: null,
-            targets: [],
-            riskReward: 0,
+            // Trading Setup from InstitutionalDataService
+            signal: tradeSetup?.action || determineSignal(nissScore),
+            entry: tradeSetup?.entry || quote?.price,
+            stopLoss: tradeSetup?.stopLoss,
+            targets: tradeSetup?.targets || [],
+            riskReward: tradeSetup?.riskReward || 0,
 
             // Key Metrics
             volumeRatio:
-              data.quote?.volume && data.quote?.avgVolume
-                ? (data.quote.volume / data.quote.avgVolume).toFixed(1)
+              quote?.volume && quote?.avgVolume
+                ? (quote.volume / quote.avgVolume).toFixed(1)
                 : "1.0",
-            pricePosition: calculatePricePosition(data.quote),
+            pricePosition: calculatePricePosition(quote),
 
             // News Quality Metrics
             sourceCredibility: getSourceCredibility(newsItem.source),
             breakingNews: isBreakingNews(newsItem),
-            marketRelevance: calculateMarketRelevance(newsItem, data.sector),
+            marketRelevance: calculateMarketRelevance(newsItem, sector),
 
             // Additional context
             url: newsItem.url,
@@ -386,14 +316,87 @@ const CatalystAnalysisTab = ({
 
           catalysts.push(catalyst);
         });
-      }
-    });
+      });
+    }
+
+    // ALSO PROCESS stockData for backward compatibility (legacy DataService format)
+    if (stockData && Object.keys(stockData).length > 0) {
+      Object.entries(stockData).forEach(([symbol, data]) => {
+        // Only add if not already in screeningResults
+        const existsInScreening = screeningResults.some(
+          (s) => s.symbol === symbol
+        );
+        if (!existsInScreening && data.news && data.news.length > 0) {
+          // Process legacy stockData structure
+          data.news.slice(0, 2).forEach((newsItem, index) => {
+            const catalyst = {
+              id: `${symbol}-legacy-${index}`,
+              ticker: symbol,
+              company: getCompanyName(symbol),
+              sector: data.sector || "Unknown",
+              event: categorizeNewsEvent(newsItem),
+              headline: newsItem.headline || newsItem.title || "No headline",
+              source: newsItem.source || "Unknown",
+              publishedAt: newsItem.datetime
+                ? new Date(newsItem.datetime * 1000)
+                : new Date(),
+              sentiment: newsItem.sentiment || 0,
+
+              // Use legacy data structure
+              nissScore: data.nissScore || 0,
+              confidence: determineConfidence(data.nissScore || 0),
+              currentPrice: data.quote?.price || 0,
+              changePercent: data.quote?.changePercent || 0,
+              volume: data.quote?.volume || 0,
+              avgVolume: data.quote?.avgVolume || data.quote?.volume || 0,
+
+              // Impact Assessment
+              expectedImpact: calculateExpectedImpact(
+                newsItem,
+                data.nissScore || 0,
+                data.quote?.changePercent
+              ),
+              probability: calculateProbability(
+                determineConfidence(data.nissScore || 0),
+                newsItem.sentiment
+              ),
+              timeframe: getEventTimeframe(newsItem),
+
+              // Trading Setup
+              signal: determineSignal(data.nissScore || 0),
+              entry: data.quote?.price,
+              stopLoss: null,
+              targets: [],
+              riskReward: 0,
+
+              // Key Metrics
+              volumeRatio:
+                data.quote?.volume && data.quote?.avgVolume
+                  ? (data.quote.volume / data.quote.avgVolume).toFixed(1)
+                  : "1.0",
+              pricePosition: calculatePricePosition(data.quote),
+
+              // News Quality Metrics
+              sourceCredibility: getSourceCredibility(newsItem.source),
+              breakingNews: isBreakingNews(newsItem),
+              marketRelevance: calculateMarketRelevance(newsItem, data.sector),
+
+              // Additional context
+              url: newsItem.url,
+              related: newsItem.related || [],
+            };
+
+            catalysts.push(catalyst);
+          });
+        }
+      });
+    }
 
     // Add mock upcoming catalysts for demonstration
     const upcomingCatalysts = generateUpcomingCatalysts();
 
     return [...catalysts, ...upcomingCatalysts];
-  }, [screeningResults, stockData]); // FIXED: Both dependencies
+  }, [screeningResults, stockData]); // Both dependencies are important
 
   // Rest of Part 2 stays the same...
   // Filter and sort catalysts
@@ -915,12 +918,6 @@ const CatalystAnalysisTab = ({
                     Next 7 days calendar
                   </p>
                 </div>
-                <button
-                  onClick={() => setCatalystView("calendar")}
-                  className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-                >
-                  View All
-                </button>
               </div>
             </div>
 

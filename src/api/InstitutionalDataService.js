@@ -1,12 +1,14 @@
 // api/InstitutionalDataService.js
 // Enhanced Institutional-Grade News Impact Trading System
+// Add this import at the top, after any existing imports
+import { API_CONFIG, makeBackendApiCall } from "./config.js";
 
 class InstitutionalDataService {
   constructor() {
-    // API Keys - These should be in environment variables
-    this.alphaVantageKey = process.env.REACT_APP_ALPHA_VANTAGE_KEY;
-    this.finnhubKey = process.env.REACT_APP_FINNHUB_KEY;
-    this.polygonKey = process.env.REACT_APP_POLYGON_KEY;
+    // API Keys - retrieved from backend service (no direct .env access)
+    this.alphaVantageKey = null; // Backend handles API keys
+    this.finnhubKey = null; // Backend handles API keys
+    this.polygonKey = null; // Backend handles API keys
 
     // Market regime detection
     this.marketRegime = {
@@ -22,8 +24,30 @@ class InstitutionalDataService {
     this.cache = new Map();
     this.cacheTTL = 5 * 60 * 1000; // 5 minutes
 
+    // Backend health status
+    this.backendHealth = true;
+
     // Universe of stocks to screen (expanded for full market coverage)
     this.screeningUniverse = this.buildScreeningUniverse();
+  }
+
+  // Add checkBackendHealth method at the beginning of the class
+  async checkBackendHealth() {
+    try {
+      const url = `${API_CONFIG.backend.baseUrl}/health`;
+      const response = await fetch(url, {
+        method: "GET",
+        timeout: 5000,
+      });
+
+      const isHealthy = response.ok;
+      this.backendHealth = isHealthy;
+      return isHealthy;
+    } catch (error) {
+      console.error("Backend health check failed:", error);
+      this.backendHealth = false;
+      return false;
+    }
   }
 
   buildScreeningUniverse() {
@@ -286,155 +310,56 @@ class InstitutionalDataService {
     this.cache.set(key, { data, timestamp: Date.now() });
   }
 
-  // Advanced sentiment analysis using multiple techniques
-  async analyzeSentiment(text, headline, source) {
-    // Weight by source credibility
-    const sourceWeights = {
-      Reuters: 1.2,
-      Bloomberg: 1.2,
-      WSJ: 1.15,
-      "Wall Street Journal": 1.15,
-      "Financial Times": 1.15,
-      CNBC: 1.0,
-      MarketWatch: 0.95,
-      "Seeking Alpha": 0.85,
-      "Yahoo Finance": 0.8,
-      Benzinga: 0.75,
-      InvestorPlace: 0.7,
-      default: 0.7,
-    };
+  // Enhanced quote fetching with backend integration (no direct API key usage)
+  async getQuote(symbol) {
+    const cacheKey = `quote_${symbol}`;
+    const cached = this.getCached(cacheKey);
+    if (cached) return cached;
 
-    const weight = sourceWeights[source] || sourceWeights.default;
+    try {
+      // Try backend first if available
+      if (this.backendHealth) {
+        try {
+          const data = await makeBackendApiCall(
+            API_CONFIG.backend.endpoints.quote(symbol)
+          );
 
-    // Advanced keyword analysis with context
-    const sentimentKeywords = {
-      strongPositive: {
-        words: [
-          "breakthrough",
-          "beat expectations",
-          "record revenue",
-          "FDA approval",
-          "strategic acquisition",
-          "market leader",
-          "strong guidance",
-          "accelerating growth",
-          "all-time high",
-          "exceeds estimates",
-          "positive surprise",
-          "blockbuster",
-        ],
-        score: 2.0,
-      },
-      positive: {
-        words: [
-          "growth",
-          "profit",
-          "upgrade",
-          "expansion",
-          "partnership",
-          "innovation",
-          "outperform",
-          "bullish",
-          "recovery",
-          "momentum",
-          "improved",
-          "gains",
-          "positive",
-          "increase",
-          "rise",
-          "up",
-          "higher",
-          "strong",
-        ],
-        score: 1.0,
-      },
-      neutral: {
-        words: [
-          "maintains",
-          "unchanged",
-          "in line",
-          "meets expectations",
-          "steady",
-          "stable",
-          "flat",
-          "mixed",
-          "modest",
-          "slight",
-        ],
-        score: 0.0,
-      },
-      negative: {
-        words: [
-          "concerns",
-          "decline",
-          "weakness",
-          "challenges",
-          "headwinds",
-          "competition",
-          "misses",
-          "cuts",
-          "delays",
-          "slowing",
-          "disappoints",
-          "lower",
-          "down",
-          "falls",
-          "drops",
-          "weak",
-          "reduced",
-        ],
-        score: -1.0,
-      },
-      strongNegative: {
-        words: [
-          "crash",
-          "plunge",
-          "investigation",
-          "lawsuit",
-          "bankruptcy",
-          "fraud",
-          "regulatory action",
-          "massive loss",
-          "failed trial",
-          "recall",
-          "halted",
-          "suspended",
-          "delisted",
-          "SEC probe",
-          "criminal",
-          "collapse",
-        ],
-        score: -2.0,
-      },
-    };
+          if (data && data.success) {
+            const quote = {
+              symbol: symbol,
+              price: data.data.price,
+              changePercent: data.data.changePercent,
+              volume: data.data.volume || 0,
+              high: data.data.high,
+              low: data.data.low,
+              open: data.data.open,
+              previousClose: data.data.previousClose,
+              timestamp: new Date(),
+              avgVolume: data.data.avgVolume,
+              high52Week: data.data.high52Week,
+              low52Week: data.data.low52Week,
+            };
 
-    // Calculate base sentiment
-    let sentimentScore = 0;
-    let matchCount = 0;
-    const textLower = (text + " " + headline).toLowerCase();
-
-    for (const [category, data] of Object.entries(sentimentKeywords)) {
-      for (const keyword of data.words) {
-        if (textLower.includes(keyword)) {
-          sentimentScore += data.score;
-          matchCount++;
+            this.setCache(cacheKey, quote);
+            return quote;
+          }
+        } catch (error) {
+          console.warn(
+            "Backend quote failed, backend required for API access:",
+            error
+          );
+          this.backendHealth = false;
         }
       }
+
+      // NOTE: No direct API fallback since we don't have API keys in frontend
+      // All API calls must go through backend for security
+      console.warn("Backend required for quote data - no direct API access");
+      return null;
+    } catch (error) {
+      console.error(`Error fetching quote for ${symbol}:`, error);
+      return null;
     }
-
-    // Normalize and apply source weight
-    const normalizedSentiment =
-      matchCount > 0 ? (sentimentScore / matchCount) * weight : 0;
-
-    // Detect specific catalysts
-    const catalysts = this.detectCatalysts(textLower);
-
-    return {
-      score: normalizedSentiment,
-      confidence: Math.min(matchCount * 0.2, 1), // 0-1 confidence based on matches
-      catalysts: catalysts,
-      sourceWeight: weight,
-    };
   }
 
   // Detect specific market-moving catalysts
@@ -1194,79 +1119,138 @@ class InstitutionalDataService {
     }
   }
 
+  // Enhanced news fetching with backend integration (no direct API key usage)
   async getNews(symbol) {
     const cacheKey = `news_${symbol}`;
     const cached = this.getCached(cacheKey);
     if (cached) return cached;
 
     try {
-      const toDate = new Date().toISOString().split("T")[0];
-      const fromDate = new Date(Date.now() - 48 * 60 * 60 * 1000)
-        .toISOString()
-        .split("T")[0];
-
-      const response = await fetch(
-        `https://finnhub.io/api/v1/company-news?symbol=${symbol}&from=${fromDate}&to=${toDate}&token=${this.finnhubKey}`
-      );
-      const news = await response.json();
-
-      // Enhance each news item with sentiment
-      const enhancedNews = await Promise.all(
-        news.slice(0, 10).map(async (article) => {
-          const sentiment = await this.analyzeSentiment(
-            article.summary,
-            article.headline,
-            article.source
+      // Try backend first if available
+      if (this.backendHealth) {
+        try {
+          const data = await makeBackendApiCall(
+            API_CONFIG.backend.endpoints.news(symbol)
           );
-          return {
-            ...article,
-            sentiment: sentiment.score,
-            confidence: sentiment.confidence,
-            catalysts: sentiment.catalysts,
-          };
-        })
-      );
 
-      this.setCache(cacheKey, enhancedNews);
-      return enhancedNews;
+          if (data && data.success) {
+            const enhancedNews = data.data.map((article) => ({
+              ...article,
+              sentiment:
+                article.sentiment ||
+                this.analyzeSentiment(
+                  article.headline || article.summary || ""
+                ),
+              confidence: article.confidence || 0.5,
+              catalysts: article.catalysts || [],
+            }));
+
+            this.setCache(cacheKey, enhancedNews);
+            return enhancedNews;
+          }
+        } catch (error) {
+          console.warn(
+            "Backend news failed, backend required for API access:",
+            error
+          );
+          this.backendHealth = false;
+        }
+      }
+
+      // NOTE: No direct API fallback since we don't have API keys in frontend
+      // All API calls must go through backend for security
+      console.warn("Backend required for news data - no direct API access");
+      return [];
     } catch (error) {
       console.error(`Error fetching news for ${symbol}:`, error);
       return [];
     }
   }
 
+  // Replace the existing getTechnicals method with this:
   async getTechnicals(symbol) {
-    // Simplified technicals - in production, these would come from proper technical analysis APIs
-    const quote = await this.getQuote(symbol);
-    if (!quote) return {};
+    const cacheKey = `technicals_${symbol}`;
+    const cached = this.getCached(cacheKey);
+    if (cached) return cached;
 
-    return {
-      sma20: quote.price * 0.98,
-      sma50: quote.price * 0.96,
-      sma200: quote.price * 0.94,
-      rsi: 50 + quote.changePercent * 3, // Simplified RSI
-      macd: quote.changePercent > 0 ? 0.5 : -0.5,
-      macdSignal: 0,
-      bbUpper: quote.high,
-      bbLower: quote.low,
-      price: quote.price,
-      adx: Math.abs(quote.changePercent) * 10,
-      atr: quote.high - quote.low || quote.price * 0.02,
-    };
+    try {
+      const data = await makeBackendApiCall(
+        API_CONFIG.backend.endpoints.technicals(symbol)
+      );
+
+      if (data && data.success) {
+        this.setCache(cacheKey, data.data);
+        return data.data;
+      }
+
+      // Fallback to simplified technicals if backend doesn't have them yet
+      const quote = await this.getQuote(symbol);
+      if (!quote) return {};
+
+      const fallbackTechnicals = {
+        sma20: quote.price * 0.98,
+        sma50: quote.price * 0.96,
+        sma200: quote.price * 0.94,
+        rsi: 50 + quote.changePercent * 3,
+        macd: quote.changePercent > 0 ? 0.5 : -0.5,
+        macdSignal: 0,
+        bbUpper: quote.high,
+        bbLower: quote.low,
+        price: quote.price,
+        adx: Math.abs(quote.changePercent) * 10,
+        atr: quote.high - quote.low || quote.price * 0.02,
+      };
+
+      this.setCache(cacheKey, fallbackTechnicals);
+      return fallbackTechnicals;
+    } catch (error) {
+      console.error(`Error fetching technicals for ${symbol}:`, error);
+      return {};
+    }
   }
 
+  // Replace the existing getOptionsData method with this:
   async getOptionsData(symbol) {
-    // Placeholder for options data
-    // In production, integrate with appropriate options data provider
-    const random = Math.random();
-    return {
-      putVolume: Math.floor(random * 10000),
-      callVolume: Math.floor(random * 15000),
-      putOI: Math.floor(random * 50000),
-      callOI: Math.floor(random * 60000),
-      avgOptionsVolume: 10000,
-      unusualActivity: random > 0.7,
-    };
+    const cacheKey = `options_${symbol}`;
+    const cached = this.getCached(cacheKey);
+    if (cached) return cached;
+
+    try {
+      const data = await makeBackendApiCall(
+        API_CONFIG.backend.endpoints.options(symbol)
+      );
+
+      if (data && data.success) {
+        this.setCache(cacheKey, data.data);
+        return data.data;
+      }
+
+      // Fallback to mock data if backend doesn't have options data yet
+      const random = Math.random();
+      const fallbackOptions = {
+        putVolume: Math.floor(random * 10000),
+        callVolume: Math.floor(random * 15000),
+        putOI: Math.floor(random * 50000),
+        callOI: Math.floor(random * 60000),
+        avgOptionsVolume: 10000,
+        unusualActivity: random > 0.7,
+      };
+
+      this.setCache(cacheKey, fallbackOptions);
+      return fallbackOptions;
+    } catch (error) {
+      console.error(`Error fetching options data for ${symbol}:`, error);
+      // Return fallback mock data
+      const random = Math.random();
+      return {
+        putVolume: Math.floor(random * 10000),
+        callVolume: Math.floor(random * 15000),
+        putOI: Math.floor(random * 50000),
+        callOI: Math.floor(random * 60000),
+        avgOptionsVolume: 10000,
+        unusualActivity: random > 0.7,
+      };
+    }
   }
 
   async getMarketCap(symbol) {
@@ -1407,6 +1391,191 @@ class InstitutionalDataService {
     }
 
     return Math.round(finalScore);
+  }
+  // Add this method at the end of your InstitutionalDataService class:
+  async checkBackendHealth() {
+    try {
+      const response = await fetch(`${API_CONFIG.backend.baseUrl}/health`, {
+        method: "GET",
+        timeout: 5000, // 5 second timeout
+      });
+      return response.ok;
+    } catch (error) {
+      console.error("Backend health check failed:", error);
+      return false;
+    }
+  }
+  // ADD these methods to src/api/InstitutionalDataService.js
+  // Place them at the end of the class, before the export statement
+
+  // Advanced sentiment analysis using multiple techniques
+  async analyzeSentiment(text, headline = "", source = "") {
+    if (!text) return 0;
+
+    const positiveWords = [
+      "buy",
+      "bullish",
+      "growth",
+      "profit",
+      "gain",
+      "increase",
+      "positive",
+      "upgrade",
+      "strong",
+      "beat",
+      "exceed",
+      "outperform",
+      "boost",
+      "rise",
+      "soar",
+      "surge",
+      "rally",
+      "breakout",
+      "bullish",
+      "optimistic",
+    ];
+
+    const negativeWords = [
+      "sell",
+      "bearish",
+      "loss",
+      "decline",
+      "decrease",
+      "negative",
+      "downgrade",
+      "weak",
+      "miss",
+      "underperform",
+      "drop",
+      "fall",
+      "crash",
+      "plunge",
+      "tumble",
+      "bearish",
+      "pessimistic",
+      "warning",
+    ];
+
+    const words = text.toLowerCase().split(/\s+/);
+    let score = 0;
+
+    words.forEach((word) => {
+      if (positiveWords.includes(word)) score += 1;
+      if (negativeWords.includes(word)) score -= 1;
+    });
+
+    // Source credibility weight
+    const sourceWeight = this.getSourceCredibilityWeight(source);
+
+    // Headline gets extra weight
+    const headlineWords = headline.toLowerCase().split(/\s+/);
+    let headlineScore = 0;
+    headlineWords.forEach((word) => {
+      if (positiveWords.includes(word)) headlineScore += 1;
+      if (negativeWords.includes(word)) headlineScore -= 1;
+    });
+
+    // Combined score with weights
+    const finalScore = (score + headlineScore * 1.5) * sourceWeight;
+
+    // Normalize to -1 to 1 range
+    return Math.max(
+      -1,
+      Math.min(1, finalScore / Math.max(words.length / 5, 1))
+    );
+  }
+
+  // Get source credibility weight
+  getSourceCredibilityWeight(source) {
+    const credibilityMap = {
+      Reuters: 1.2,
+      Bloomberg: 1.2,
+      "Wall Street Journal": 1.1,
+      "Financial Times": 1.1,
+      CNBC: 1.0,
+      MarketWatch: 0.9,
+      "Yahoo Finance": 0.8,
+      "Seeking Alpha": 0.7,
+      "The Motley Fool": 0.6,
+    };
+    return credibilityMap[source] || 0.8; // Default weight
+  }
+
+  // Test backend connection
+  async testBackendConnection() {
+    try {
+      const url = `${API_CONFIG.backend.baseUrl}/health`;
+      const response = await fetch(url, {
+        method: "GET",
+        timeout: 5000,
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log("✅ Backend connection successful:", data);
+        return true;
+      } else {
+        console.error("❌ Backend connection failed:", response.status);
+        return false;
+      }
+    } catch (error) {
+      console.error("❌ Backend connection error:", error);
+      return false;
+    }
+  }
+
+  // Enhanced batch processing with better error handling
+  async getMultipleStockDataEnhanced(symbols, batchSize = 10) {
+    const results = [];
+
+    // Test backend first
+    const backendWorking = await this.testBackendConnection();
+
+    if (backendWorking) {
+      try {
+        // Try backend batch endpoint
+        const data = await makeBackendApiCall("/api/batch/stocks", {
+          method: "POST",
+          body: JSON.stringify({ symbols }),
+        });
+
+        if (data && data.success) {
+          return data.stocks;
+        }
+      } catch (error) {
+        console.warn("Backend batch failed, using individual requests:", error);
+      }
+    }
+
+    // Fallback to individual requests
+    for (let i = 0; i < symbols.length; i += batchSize) {
+      const batch = symbols.slice(i, i + batchSize);
+      const promises = batch.map((symbol) => this.analyzeStock(symbol));
+
+      try {
+        const batchResults = await Promise.allSettled(promises);
+
+        batchResults.forEach((result, index) => {
+          if (result.status === "fulfilled" && result.value) {
+            results.push(result.value);
+          } else {
+            console.warn(
+              `❌ Failed to analyze ${batch[index]}:`,
+              result.reason
+            );
+          }
+        });
+
+        // Rate limiting delay
+        if (i + batchSize < symbols.length) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      } catch (error) {
+        console.error(`❌ Batch error starting at index ${i}:`, error);
+      }
+    }
+
+    return results;
   }
 }
 

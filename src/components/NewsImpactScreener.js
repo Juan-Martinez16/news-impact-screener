@@ -40,6 +40,7 @@ const NewsImpactScreener = () => {
   const [alerts, setAlerts] = useState([]);
   const [marketStatus, setMarketStatus] = useState("");
   const [historicalPerformance, setHistoricalPerformance] = useState([]);
+  const [backendHealth, setBackendHealth] = useState(true);
 
   // Enhanced institutional filters
   const [filters, setFilters] = useState({
@@ -88,7 +89,30 @@ const NewsImpactScreener = () => {
       Notification.requestPermission();
     }
   }, []);
+  // Add this useEffect after your existing ones:
+  useEffect(() => {
+    // Check backend health on component mount
+    const checkBackend = async () => {
+      try {
+        const isHealthy = await InstitutionalDataService.checkBackendHealth();
+        setBackendHealth(isHealthy);
 
+        if (!isHealthy) {
+          console.warn("Backend is not responding, using fallback data");
+        }
+      } catch (error) {
+        console.error("Backend health check failed:", error);
+        setBackendHealth(false);
+      }
+    };
+
+    checkBackend();
+
+    // Check backend health every 5 minutes
+    const healthCheckInterval = setInterval(checkBackend, 5 * 60 * 1000);
+
+    return () => clearInterval(healthCheckInterval);
+  }, []);
   // Enhanced market status with institutional trading windows
   const updateMarketStatus = (now) => {
     const nyTime = new Date(
@@ -141,14 +165,30 @@ const NewsImpactScreener = () => {
   }, []);
 
   // Institutional-grade data loading
+
+  // Enhanced data loading with institutional screening
   const loadAllData = async () => {
     setLoading(true);
     try {
       if (!isScreening) {
         setIsScreening(true);
 
-        // Run full institutional screening
-        const results = await InstitutionalDataService.screenAllStocks(filters);
+        let results;
+
+        // Try backend screening first, fallback to client-side
+        if (backendHealth) {
+          try {
+            // Try to use backend screening if available
+            results = await InstitutionalDataService.screenAllStocks(filters);
+          } catch (error) {
+            console.warn("Backend screening failed, using client-side:", error);
+            results = await InstitutionalDataService.screenAllStocks(filters);
+            setBackendHealth(false);
+          }
+        } else {
+          results = await InstitutionalDataService.screenAllStocks(filters);
+        }
+
         setScreeningResults(results);
 
         // Convert to legacy format for backward compatibility
@@ -168,6 +208,7 @@ const NewsImpactScreener = () => {
     } catch (error) {
       console.error("Error loading institutional data:", error);
       setIsScreening(false);
+      setBackendHealth(false);
     } finally {
       setLoading(false);
     }
@@ -939,6 +980,7 @@ const NewsImpactScreener = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Enhanced Header with Institutional Branding */}
+
       <header className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-20">
@@ -946,12 +988,8 @@ const NewsImpactScreener = () => {
               <JMLogo variant="primary" height={60} />
               <div className="ml-4 pl-4 border-l border-gray-200">
                 <h1 className="text-lg font-semibold text-gray-900">
-                  Institutional News Impact Screener
+                  News Impact Screener
                 </h1>
-                <p className="text-xs text-gray-500 flex items-center gap-1">
-                  <Shield className="h-3 w-3" />
-                  Institutional Grade 2.0
-                </p>
               </div>
               <span
                 className={`ml-4 text-sm font-medium px-3 py-1 rounded-full ${
@@ -965,6 +1003,19 @@ const NewsImpactScreener = () => {
               >
                 {marketStatus}
               </span>
+
+              {/* Backend Health Status */}
+              {!backendHealth && (
+                <span className="ml-4 text-sm font-medium px-3 py-1 rounded-full bg-orange-100 text-orange-800">
+                  ⚠️ Backend Offline - Using Cached Data
+                </span>
+              )}
+
+              {backendHealth && (
+                <span className="ml-4 text-sm font-medium px-3 py-1 rounded-full bg-green-100 text-green-800">
+                  ✅ Backend Online
+                </span>
+              )}
             </div>
             <div className="flex items-center space-x-4">
               {/* Market regime badges */}
@@ -998,7 +1049,6 @@ const NewsImpactScreener = () => {
           </div>
         </div>
       </header>
-
       {/* Enhanced Navigation */}
       <div className="bg-white border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -1019,7 +1069,6 @@ const NewsImpactScreener = () => {
           </nav>
         </div>
       </div>
-
       {/* Enhanced Filters */}
       <div className="bg-white px-4 py-3 border-b">
         <div className="max-w-7xl mx-auto">
@@ -1106,7 +1155,6 @@ const NewsImpactScreener = () => {
           </div>
         </div>
       </div>
-
       {/* Search Bar */}
       <div className="bg-white px-4 py-4 border-b">
         <div className="max-w-7xl mx-auto">
@@ -1122,7 +1170,6 @@ const NewsImpactScreener = () => {
           </div>
         </div>
       </div>
-
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-6">
         {activeTab === "dashboard" && (
@@ -1481,10 +1528,8 @@ const NewsImpactScreener = () => {
           />
         )}
       </main>
-
       {/* Detailed Analysis Modal */}
       {renderDetailedAnalysis()}
-
       {/* ADD THIS: Debug Component */}
       <CatalystMetricsDebugger
         stockData={stockData}
