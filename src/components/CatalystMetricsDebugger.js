@@ -1,6 +1,4 @@
 // src/components/CatalystMetricsDebugger.js
-// UPDATED TO REMOVE ALL DATASERVICE DEPENDENCIES
-
 import React, { useState } from "react";
 import {
   AlertCircle,
@@ -8,277 +6,391 @@ import {
   CheckCircle,
   XCircle,
   Info,
+  TrendingUp,
+  TrendingDown,
+  Activity,
 } from "lucide-react";
 
-const CatalystMetricsDebugger = ({ screeningResults }) => {
-  // REMOVED: stockData parameter
+const CatalystMetricsDebugger = ({ screeningResults = [] }) => {
   const [selectedStock, setSelectedStock] = useState(null);
-  const [debugMode, setDebugMode] = useState(true);
+  const [debugMode, setDebugMode] = useState(false); // Default to false to hide debugger
 
-  // Get a sample stock for debugging - ONLY from InstitutionalDataService results
+  // Get a sample stock for debugging
   const sampleStock = screeningResults?.[0];
   const debugStock = selectedStock || sampleStock;
 
-  // Diagnostic functions - UPDATED to only check InstitutionalDataService data
+  // Only show debugger in development mode
+  if (process.env.NODE_ENV === "production" && !debugMode) {
+    return null;
+  }
+
+  // Diagnostic functions
   const checkNISSScore = () => {
-    if (!debugStock)
+    if (!debugStock) {
       return {
         status: "error",
-        message: "No stock data available from InstitutionalDataService",
+        message: "No stock data available from screening results",
       };
+    }
 
     const nissScore = debugStock.nissScore;
-    if (nissScore === undefined)
+    if (nissScore === undefined) {
       return {
         status: "error",
-        message: "NISS Score is undefined in InstitutionalDataService data",
+        message: "NISS Score is undefined in screening data",
       };
-    if (nissScore === 0)
+    }
+    if (nissScore === 0) {
       return {
         status: "warning",
         message: "NISS Score is 0 - likely calculation issue",
       };
-    if (Math.abs(nissScore) > 100)
-      return { status: "warning", message: "NISS Score seems abnormally high" };
-    return { status: "success", message: `NISS Score: ${nissScore} (Normal)` };
-  };
-
-  const checkVolumeData = () => {
-    if (!debugStock?.quote)
+    }
+    if (Math.abs(nissScore) > 100) {
       return {
-        status: "error",
-        message: "No quote data available from InstitutionalDataService",
+        status: "warning",
+        message: "NISS Score seems abnormally high",
       };
-
-    const { volume, avgVolume } = debugStock.quote;
-    if (!volume)
-      return {
-        status: "error",
-        message: "Current volume missing from InstitutionalDataService",
-      };
-    if (!avgVolume)
-      return {
-        status: "error",
-        message: "Average volume missing from InstitutionalDataService",
-      };
-
-    const ratio = volume / avgVolume;
+    }
     return {
-      status: ratio !== 1 ? "success" : "warning",
-      message: `Volume: ${volume?.toLocaleString()}, Avg: ${avgVolume?.toLocaleString()}, Ratio: ${ratio.toFixed(
-        2
-      )}x`,
-      data: { volume, avgVolume, ratio },
+      status: "success",
+      message: `NISS Score: ${nissScore.toFixed(1)} (Normal)`,
     };
   };
 
-  const checkDataService = () => {
-    const isScreeningResults = screeningResults && screeningResults.length > 0;
-
-    if (!isScreeningResults) {
+  const checkVolumeData = () => {
+    if (!debugStock?.quote) {
       return {
         status: "error",
-        message:
-          "No data from InstitutionalDataService - check backend connection",
+        message: "No quote data available from screening results",
       };
     }
 
+    const { volume, avgVolume } = debugStock.quote;
+    if (!volume) {
+      return {
+        status: "error",
+        message: "Current volume missing from quote data",
+      };
+    }
+    if (!avgVolume) {
+      return {
+        status: "warning",
+        message: "Average volume missing - using current volume as fallback",
+      };
+    }
+
+    const ratio = volume / (avgVolume || volume);
     return {
-      status: "success",
-      message: "InstitutionalDataService working correctly",
+      status: ratio > 0.5 ? "success" : "warning",
+      message: `Volume ratio: ${ratio.toFixed(2)}x average`,
     };
   };
 
   const checkNewsData = () => {
-    if (!debugStock?.news)
+    if (!debugStock?.news) {
       return {
-        status: "error",
-        message: "No news data in InstitutionalDataService result",
+        status: "warning",
+        message: "No news data available",
       };
+    }
 
     const newsCount = debugStock.news.length;
-    if (newsCount === 0)
-      return { status: "warning", message: "No news items found" };
+    if (newsCount === 0) {
+      return {
+        status: "warning",
+        message: "No news articles found",
+      };
+    }
 
-    const hasHeadlines = debugStock.news.some(
-      (item) => item.headline || item.title
+    const hasValidSentiment = debugStock.news.some(
+      (article) => article.sentiment !== undefined && article.sentiment !== null
     );
-    if (!hasHeadlines)
-      return { status: "warning", message: "News items missing headlines" };
 
     return {
-      status: "success",
-      message: `${newsCount} news items with headlines found`,
-      data: {
-        newsCount,
-        sampleHeadline:
-          debugStock.news[0]?.headline || debugStock.news[0]?.title,
-      },
+      status: hasValidSentiment ? "success" : "warning",
+      message: `${newsCount} news articles, sentiment analysis: ${
+        hasValidSentiment ? "available" : "missing"
+      }`,
+    };
+  };
+
+  const checkTechnicalData = () => {
+    if (!debugStock?.technicals) {
+      return {
+        status: "warning",
+        message: "No technical data available",
+      };
+    }
+
+    const technicals = debugStock.technicals;
+    const hasBasicIndicators =
+      technicals.rsi && technicals.sma20 && technicals.atr;
+
+    return {
+      status: hasBasicIndicators ? "success" : "warning",
+      message: `Technical indicators: ${
+        hasBasicIndicators ? "complete" : "partial"
+      }`,
     };
   };
 
   const checkTradeSetup = () => {
-    if (!debugStock?.tradeSetup)
+    if (!debugStock?.tradeSetup) {
       return {
-        status: "warning",
-        message: "No trade setup data from InstitutionalDataService",
-      };
-
-    const { entry, stopLoss, targets, riskReward } = debugStock.tradeSetup;
-
-    const checks = [];
-    if (!entry) checks.push("Missing entry price");
-    if (!stopLoss) checks.push("Missing stop loss");
-    if (!targets || targets.length === 0) checks.push("Missing price targets");
-    if (!riskReward) checks.push("Missing risk/reward ratio");
-
-    if (checks.length > 0) {
-      return {
-        status: "warning",
-        message: `Trade setup incomplete: ${checks.join(", ")}`,
+        status: "error",
+        message: "No trade setup data available",
       };
     }
 
+    const setup = debugStock.tradeSetup;
+    const hasCompleteSetup = setup.action && setup.entry && setup.stopLoss;
+
     return {
-      status: "success",
-      message: `Complete trade setup: Entry $${entry}, Stop $${stopLoss}, ${targets.length} targets`,
-      data: { entry, stopLoss, targets: targets.length, riskReward },
+      status: hasCompleteSetup ? "success" : "warning",
+      message: `Trade setup: ${hasCompleteSetup ? "complete" : "incomplete"}`,
     };
   };
 
-  const StatusIcon = ({ status }) => {
+  const diagnostics = [
+    { name: "NISS Score", check: checkNISSScore },
+    { name: "Volume Data", check: checkVolumeData },
+    { name: "News Data", check: checkNewsData },
+    { name: "Technical Data", check: checkTechnicalData },
+    { name: "Trade Setup", check: checkTradeSetup },
+  ];
+
+  const getStatusIcon = (status) => {
     switch (status) {
       case "success":
-        return <CheckCircle className="h-5 w-5 text-green-500" />;
+        return <CheckCircle className="h-4 w-4 text-green-500" />;
       case "warning":
-        return <AlertCircle className="h-5 w-5 text-yellow-500" />;
+        return <AlertCircle className="h-4 w-4 text-yellow-500" />;
       case "error":
-        return <XCircle className="h-5 w-5 text-red-500" />;
+        return <XCircle className="h-4 w-4 text-red-500" />;
       default:
-        return <Info className="h-5 w-5 text-blue-500" />;
+        return <Info className="h-4 w-4 text-gray-500" />;
     }
   };
 
-  const diagnostics = [
-    { name: "InstitutionalDataService Connection", check: checkDataService },
-    { name: "NISS Score Calculation", check: checkNISSScore },
-    { name: "Volume Data", check: checkVolumeData },
-    { name: "News Data Quality", check: checkNewsData },
-    { name: "Trade Setup Generation", check: checkTradeSetup },
-  ];
+  const getStatusColor = (status) => {
+    switch (status) {
+      case "success":
+        return "bg-green-50 border-green-200";
+      case "warning":
+        return "bg-yellow-50 border-yellow-200";
+      case "error":
+        return "bg-red-50 border-red-200";
+      default:
+        return "bg-gray-50 border-gray-200";
+    }
+  };
 
-  if (!debugMode) return null;
+  // Don't render if no data to debug
+  if (!debugStock && screeningResults.length === 0) {
+    return null;
+  }
 
   return (
-    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <Info className="h-5 w-5 text-blue-500" />
-          <h3 className="font-semibold text-gray-800">
-            InstitutionalDataService Diagnostics
-          </h3>
-        </div>
-        <button
-          onClick={() => setDebugMode(false)}
-          className="text-gray-500 hover:text-gray-700"
-        >
-          ×
-        </button>
-      </div>
+    <div className="fixed bottom-4 right-4 z-50">
+      {/* Toggle Button */}
+      <button
+        onClick={() => setDebugMode(!debugMode)}
+        className="mb-2 p-2 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-colors"
+        title="Toggle Debug Panel"
+      >
+        <Activity className="h-5 w-5" />
+      </button>
 
-      {/* Stock selector - ONLY showing InstitutionalDataService results */}
-      {screeningResults && screeningResults.length > 1 && (
-        <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Debug Stock:
-          </label>
-          <select
-            value={selectedStock?.symbol || ""}
-            onChange={(e) => {
-              const stock = screeningResults.find(
-                (s) => s.symbol === e.target.value
-              );
-              setSelectedStock(stock);
-            }}
-            className="border border-gray-300 rounded px-3 py-1 text-sm"
-          >
-            <option value="">Select stock to debug...</option>
-            {screeningResults.map((stock) => (
-              <option key={stock.symbol} value={stock.symbol}>
-                {stock.symbol} - {stock.company || "Unknown Company"}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      {/* Diagnostic results */}
-      <div className="space-y-3">
-        {diagnostics.map((diagnostic, index) => {
-          const result = diagnostic.check();
-          return (
-            <div
-              key={index}
-              className="flex items-start gap-3 p-3 bg-white rounded border"
+      {/* Debug Panel */}
+      {debugMode && (
+        <div className="bg-white rounded-lg shadow-2xl border p-4 w-80 max-h-96 overflow-y-auto">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-900">
+              System Diagnostics
+            </h3>
+            <button
+              onClick={() => setDebugMode(false)}
+              className="text-gray-500 hover:text-gray-700"
             >
-              <StatusIcon status={result.status} />
-              <div className="flex-1">
-                <div className="font-medium text-sm text-gray-800">
-                  {diagnostic.name}
+              ✕
+            </button>
+          </div>
+
+          {/* Stock Selector */}
+          {screeningResults.length > 1 && (
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Debug Stock:
+              </label>
+              <select
+                value={debugStock?.symbol || ""}
+                onChange={(e) => {
+                  const stock = screeningResults.find(
+                    (s) => s.symbol === e.target.value
+                  );
+                  setSelectedStock(stock);
+                }}
+                className="w-full text-sm border rounded px-3 py-1"
+              >
+                {screeningResults.slice(0, 10).map((stock) => (
+                  <option key={stock.symbol} value={stock.symbol}>
+                    {stock.symbol} - NISS:{" "}
+                    {stock.nissScore?.toFixed(0) || "N/A"}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* System Status */}
+          <div className="space-y-3">
+            <div className="border-b pb-2">
+              <h4 className="text-sm font-medium text-gray-700">
+                Screening Results: {screeningResults.length} stocks
+              </h4>
+            </div>
+
+            {debugStock && (
+              <>
+                <div className="bg-gray-50 p-3 rounded">
+                  <h4 className="text-sm font-semibold text-gray-800 mb-2">
+                    Current Stock: {debugStock.symbol}
+                  </h4>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <span className="text-gray-600">Price:</span>
+                      <span className="ml-1 font-medium">
+                        ${debugStock.quote?.price?.toFixed(2) || "N/A"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">Change:</span>
+                      <span
+                        className={`ml-1 font-medium ${
+                          (debugStock.quote?.changePercent || 0) > 0
+                            ? "text-green-600"
+                            : "text-red-600"
+                        }`}
+                      >
+                        {debugStock.quote?.changePercent?.toFixed(2) || 0}%
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">NISS:</span>
+                      <span className="ml-1 font-medium">
+                        {debugStock.nissScore?.toFixed(0) || "N/A"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">Confidence:</span>
+                      <span className="ml-1 font-medium">
+                        {debugStock.nissData?.confidence || "N/A"}
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <div className="text-sm text-gray-600 mt-1">
-                  {result.message}
+
+                {/* Diagnostic Results */}
+                <div className="space-y-2">
+                  {diagnostics.map((diagnostic) => {
+                    const result = diagnostic.check();
+                    return (
+                      <div
+                        key={diagnostic.name}
+                        className={`p-2 rounded border ${getStatusColor(
+                          result.status
+                        )}`}
+                      >
+                        <div className="flex items-center space-x-2">
+                          {getStatusIcon(result.status)}
+                          <span className="text-sm font-medium">
+                            {diagnostic.name}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-600 mt-1">
+                          {result.message}
+                        </p>
+                      </div>
+                    );
+                  })}
                 </div>
-                {result.data && (
-                  <div className="text-xs text-gray-500 mt-1 font-mono">
-                    {JSON.stringify(result.data, null, 2)}
+
+                {/* NISS Components Breakdown */}
+                {debugStock.nissData?.components && (
+                  <div className="bg-blue-50 p-3 rounded border border-blue-200">
+                    <h5 className="text-xs font-semibold text-blue-800 mb-2">
+                      NISS Components
+                    </h5>
+                    <div className="space-y-1">
+                      {Object.entries(debugStock.nissData.components).map(
+                        ([key, value]) => (
+                          <div
+                            key={key}
+                            className="flex justify-between text-xs"
+                          >
+                            <span className="text-blue-700 capitalize">
+                              {key.replace(/([A-Z])/g, " $1").trim()}:
+                            </span>
+                            <span className="font-medium text-blue-900">
+                              {typeof value === "number"
+                                ? value.toFixed(1)
+                                : value}
+                            </span>
+                          </div>
+                        )
+                      )}
+                    </div>
                   </div>
                 )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
 
-      {/* Sample data display */}
-      {debugStock && (
-        <div className="mt-4 p-3 bg-white rounded border">
-          <h4 className="font-medium text-sm text-gray-800 mb-2">
-            Sample InstitutionalDataService Data for {debugStock.symbol}:
-          </h4>
-          <pre className="text-xs text-gray-600 overflow-x-auto">
-            {JSON.stringify(
-              {
-                symbol: debugStock.symbol,
-                nissScore: debugStock.nissScore,
-                confidence: debugStock.nissData?.confidence,
-                quote: {
-                  price: debugStock.quote?.price,
-                  volume: debugStock.quote?.volume,
-                  avgVolume: debugStock.quote?.avgVolume,
-                  changePercent: debugStock.quote?.changePercent,
-                },
-                newsCount: debugStock.news?.length || 0,
-                tradeSetup: debugStock.tradeSetup
-                  ? {
-                      action: debugStock.tradeSetup.action,
-                      entry: debugStock.tradeSetup.entry,
-                      stopLoss: debugStock.tradeSetup.stopLoss,
-                      targetsCount: debugStock.tradeSetup.targets?.length || 0,
-                    }
-                  : null,
-              },
-              null,
-              2
+                {/* Trade Setup Summary */}
+                {debugStock.tradeSetup && (
+                  <div className="bg-green-50 p-3 rounded border border-green-200">
+                    <h5 className="text-xs font-semibold text-green-800 mb-2">
+                      Trade Setup
+                    </h5>
+                    <div className="space-y-1 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-green-700">Action:</span>
+                        <span className="font-medium text-green-900">
+                          {debugStock.tradeSetup.action}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-green-700">Entry:</span>
+                        <span className="font-medium text-green-900">
+                          ${debugStock.tradeSetup.entry?.toFixed(2) || "N/A"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-green-700">Stop:</span>
+                        <span className="font-medium text-green-900">
+                          ${debugStock.tradeSetup.stopLoss?.toFixed(2) || "N/A"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-green-700">R:R:</span>
+                        <span className="font-medium text-green-900">
+                          1:
+                          {debugStock.tradeSetup.riskReward?.toFixed(1) ||
+                            "N/A"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
-          </pre>
+
+            {/* System Info */}
+            <div className="border-t pt-2 text-xs text-gray-500">
+              <div>Build: {process.env.NODE_ENV}</div>
+              <div>Last Update: {new Date().toLocaleTimeString()}</div>
+            </div>
+          </div>
         </div>
       )}
-
-      <div className="mt-4 text-xs text-gray-500">
-        💡 This debugger helps verify InstitutionalDataService data quality and
-        completeness. All legacy DataService dependencies have been removed.
-      </div>
     </div>
   );
 };

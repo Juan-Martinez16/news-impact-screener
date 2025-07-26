@@ -89,6 +89,7 @@ const NewsImpactScreener = () => {
       Notification.requestPermission();
     }
   }, []);
+
   // Add this useEffect after your existing ones:
   useEffect(() => {
     // Check backend health on component mount
@@ -113,6 +114,7 @@ const NewsImpactScreener = () => {
 
     return () => clearInterval(healthCheckInterval);
   }, []);
+
   // Enhanced market status with institutional trading windows
   const updateMarketStatus = (now) => {
     const nyTime = new Date(
@@ -164,8 +166,6 @@ const NewsImpactScreener = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Institutional-grade data loading
-
   // Enhanced data loading with institutional screening
   const loadAllData = async () => {
     setLoading(true);
@@ -213,6 +213,7 @@ const NewsImpactScreener = () => {
       setLoading(false);
     }
   };
+
   // Enhanced institutional pattern detection
   const detectInstitutionalPatterns = (data) => {
     const patterns = [];
@@ -1063,7 +1064,7 @@ const NewsImpactScreener = () => {
                     : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
                 }`}
               >
-                {tab}
+                {tab === "catalysts" ? "Catalyst Analysis" : tab}
               </button>
             ))}
           </nav>
@@ -1473,12 +1474,14 @@ const NewsImpactScreener = () => {
         )}
 
         {/* Other tabs content would go here */}
-        <CatalystAnalysisTab
-          screeningResults={screeningResults} // ✅ ONLY InstitutionalDataService data
-          filters={filters}
-          sortBy={sortBy}
-          setSortBy={setSortBy}
-        />
+        {activeTab === "catalysts" && (
+          <CatalystAnalysisTab
+            screeningResults={screeningResults}
+            filters={filters}
+            sortBy={sortBy}
+            setSortBy={setSortBy}
+          />
+        )}
 
         {activeTab === "alerts" && (
           <div className="bg-white rounded-lg shadow p-6">

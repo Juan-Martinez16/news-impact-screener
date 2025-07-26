@@ -29,7 +29,7 @@ import {
   AlertTriangle,
   CheckCircle,
   XCircle,
-  TrendingFlat,
+  Minus,
 } from "lucide-react";
 import InstitutionalDataService from "../api/InstitutionalDataService";
 
@@ -55,6 +55,7 @@ const CatalystAnalysisTab = ({
   const [upcomingEarnings, setUpcomingEarnings] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(new Date());
+
   // Enhanced catalyst categorization based on real patterns
   const categorizeNewsEvent = useCallback((newsItem) => {
     if (!newsItem || !newsItem.headline) return "Market News";
@@ -894,7 +895,7 @@ const CatalystAnalysisTab = ({
         return {
           bg: "bg-gray-500",
           text: "text-white",
-          icon: <TrendingFlat className="h-3 w-3" />,
+          icon: <Minus className="h-3 w-3" />,
         };
       }
       return {
@@ -1959,7 +1960,7 @@ const CatalystAnalysisTab = ({
                         "bearish" ? (
                         <TrendingDown className="h-3 w-3 mr-1" />
                       ) : (
-                        <TrendingFlat className="h-3 w-3 mr-1" />
+                        <Minus className="h-3 w-3 mr-1" />
                       )}
                       {InstitutionalDataService.marketRegime.trend.toUpperCase()}
                     </span>
