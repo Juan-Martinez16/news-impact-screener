@@ -1,4 +1,8 @@
-import React, { useState, useMemo } from "react";
+// src/components/CatalystAnalysisTab.js
+// ENHANCED: Removed all dataService.js dependencies, using only InstitutionalDataService
+// Improved UI/UX with better loading states and real-time data
+
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import {
   TrendingUp,
   TrendingDown,
@@ -19,231 +23,510 @@ import {
   Activity,
   RefreshCw,
   Bell,
+  Search,
+  Shield,
+  Loader2,
+  AlertTriangle,
+  CheckCircle,
+  XCircle,
+  TrendingFlat,
 } from "lucide-react";
+import InstitutionalDataService from "../api/InstitutionalDataService";
 
 const CatalystAnalysisTab = ({
-  stockData,
-  searchQuery,
-  setSearchQuery,
-  loading,
   screeningResults = [],
+  filters = {},
+  refreshTrigger = 0, // Add this prop to trigger refreshes from parent
 }) => {
-  // State for catalyst tab
+  // Enhanced state management
   const [catalystView, setCatalystView] = useState("live");
   const [catalystFilter, setCatalystFilter] = useState("all");
   const [timeframe, setTimeframe] = useState("24h");
   const [expandedCatalyst, setExpandedCatalyst] = useState(null);
   const [sortBy, setSortBy] = useState("impact");
+  const [sortDirection, setSortDirection] = useState("desc");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-  // Helper functions
-  function getCompanyName(symbol) {
-    const names = {
-      VKTX: "Viking Therapeutics",
-      SMCI: "Super Micro Computer",
-      PLTR: "Palantir Technologies",
-      TSLA: "Tesla Inc",
-      NVDA: "NVIDIA Corporation",
-      AAPL: "Apple Inc.",
-      MSFT: "Microsoft Corporation",
-      GOOGL: "Alphabet Inc.",
-      AMD: "Advanced Micro Devices",
-      META: "Meta Platforms",
-      MRNA: "Moderna Inc.",
-      BNTX: "BioNTech SE",
-      RIVN: "Rivian Automotive",
-      LCID: "Lucid Motors",
+  // New state for real-time data
+  const [additionalCatalysts, setAdditionalCatalysts] = useState([]);
+  const [marketEvents, setMarketEvents] = useState([]);
+  const [upcomingEarnings, setUpcomingEarnings] = useState([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastRefresh, setLastRefresh] = useState(new Date());
+  // Enhanced catalyst categorization based on real patterns
+  const categorizeNewsEvent = useCallback((newsItem) => {
+    if (!newsItem || !newsItem.headline) return "Market News";
+
+    const headline = newsItem.headline.toLowerCase();
+    const categorization = {
+      Earnings: [
+        "earnings",
+        "quarterly",
+        "q1",
+        "q2",
+        "q3",
+        "q4",
+        "revenue",
+        "eps",
+        "guidance",
+        "forecast",
+        "results",
+      ],
+      "FDA/Regulatory": [
+        "fda",
+        "approval",
+        "clinical",
+        "trial",
+        "phase",
+        "drug",
+        "regulatory",
+        "clearance",
+        "ce mark",
+      ],
+      Partnership: [
+        "partnership",
+        "collaboration",
+        "agreement",
+        "deal",
+        "joint venture",
+        "strategic alliance",
+      ],
+      "M&A": [
+        "merger",
+        "acquisition",
+        "acquire",
+        "takeover",
+        "buyout",
+        "purchase",
+        "consolidation",
+      ],
+      "Analyst Action": [
+        "upgrade",
+        "downgrade",
+        "price target",
+        "rating",
+        "analyst",
+        "coverage",
+        "initiates",
+        "reiterates",
+      ],
+      "Clinical Trial": [
+        "clinical",
+        "trial",
+        "study",
+        "data",
+        "results",
+        "endpoint",
+        "patient",
+        "treatment",
+      ],
+      "Executive Change": [
+        "ceo",
+        "cfo",
+        "executive",
+        "board",
+        "management",
+        "appoint",
+        "resign",
+        "retirement",
+      ],
+      "Product Launch": [
+        "launch",
+        "release",
+        "announce",
+        "unveil",
+        "introduce",
+        "new product",
+        "innovation",
+      ],
+      "Legal/Regulatory": [
+        "lawsuit",
+        "litigation",
+        "sec",
+        "investigation",
+        "probe",
+        "settlement",
+        "violation",
+      ],
+      "Financial Update": [
+        "dividend",
+        "buyback",
+        "share repurchase",
+        "capital",
+        "debt",
+        "financing",
+        "offering",
+      ],
     };
-    return names[symbol] || `${symbol} Inc.`;
-  }
 
-  function categorizeNewsEvent(newsItem) {
-    const headline = (newsItem.headline || newsItem.title || "").toLowerCase();
-
-    if (headline.includes("earnings") || headline.includes("quarterly"))
-      return "Earnings";
-    if (headline.includes("fda") || headline.includes("approval"))
-      return "FDA/Regulatory";
-    if (headline.includes("partnership") || headline.includes("deal"))
-      return "Partnership";
-    if (headline.includes("acquisition") || headline.includes("merger"))
-      return "M&A";
-    if (headline.includes("upgrade") || headline.includes("downgrade"))
-      return "Analyst Action";
-    if (headline.includes("clinical") || headline.includes("trial"))
-      return "Clinical Trial";
-    if (headline.includes("ceo") || headline.includes("executive"))
-      return "Executive Change";
-    if (headline.includes("product") || headline.includes("launch"))
-      return "Product Launch";
+    for (const [category, keywords] of Object.entries(categorization)) {
+      if (keywords.some((keyword) => headline.includes(keyword))) {
+        return category;
+      }
+    }
 
     return "Market News";
-  }
+  }, []);
 
-  function calculateExpectedImpact(newsItem, nissScore, changePercent) {
-    const baseImpact = Math.abs(nissScore) / 10;
-    const sentimentMultiplier = newsItem.sentiment
-      ? Math.abs(newsItem.sentiment) * 2
-      : 1;
-    const volatilityBoost = Math.abs(changePercent || 0) / 2;
+  // Calculate expected impact based on real metrics
+  const calculateExpectedImpact = useCallback(
+    (newsItem, nissScore, changePercent, technicals) => {
+      if (!newsItem || !nissScore) {
+        return { min: 0, max: 0, confidence: "LOW" };
+      }
 
-    const impact = (baseImpact + volatilityBoost) * sentimentMultiplier;
+      // Base impact from NISS score (institutional-grade calculation)
+      const baseImpact = Math.abs(nissScore) / 10;
 
-    return {
-      min:
-        nissScore > 0 ? Math.max(2, impact * 0.5) : -Math.max(5, impact * 1.2),
-      max:
-        nissScore > 0 ? Math.max(8, impact * 1.5) : -Math.max(2, impact * 0.4),
-      confidence: impact > 10 ? "HIGH" : impact > 5 ? "MEDIUM" : "LOW",
+      // Sentiment multiplier - use actual sentiment if available
+      const sentiment = newsItem.sentiment || 0;
+      const sentimentMultiplier = 1 + Math.abs(sentiment) * 0.5;
+
+      // Volatility boost from current price action
+      const volatilityBoost = Math.abs(changePercent || 0) / 2;
+
+      // Technical confirmation
+      const technicalBoost =
+        technicals?.momentum > 70 ? 1.2 : technicals?.momentum < 30 ? 0.8 : 1.0;
+
+      // Calculate raw impact
+      const rawImpact =
+        (baseImpact + volatilityBoost) * sentimentMultiplier * technicalBoost;
+
+      // Determine direction and range
+      const direction = nissScore > 0 ? 1 : -1;
+      const confidence =
+        Math.abs(nissScore) > 75
+          ? "HIGH"
+          : Math.abs(nissScore) > 60
+          ? "MEDIUM"
+          : "LOW";
+
+      // Calculate min/max with realistic ranges
+      const impactRange = {
+        HIGH: { min: 0.5, max: 1.5 },
+        MEDIUM: { min: 0.3, max: 1.0 },
+        LOW: { min: 0.1, max: 0.5 },
+      };
+
+      const range = impactRange[confidence];
+      const avgImpact = rawImpact * direction;
+
+      return {
+        min: avgImpact * range.min,
+        max: avgImpact * range.max,
+        confidence: confidence,
+        probability: calculateProbability(confidence, sentiment),
+      };
+    },
+    []
+  );
+
+  // Calculate probability based on confidence and sentiment
+  const calculateProbability = useCallback((confidence, sentiment) => {
+    const baseProb = {
+      HIGH: 0.75,
+      MEDIUM: 0.6,
+      LOW: 0.45,
     };
-  }
 
-  function calculateProbability(confidence, sentiment) {
-    let baseProb =
-      confidence === "HIGH" ? 0.75 : confidence === "MEDIUM" ? 0.6 : 0.45;
-    const sentimentBoost = Math.abs(sentiment || 0) * 0.15;
-    return Math.min(0.95, baseProb + sentimentBoost);
-  }
+    const prob = baseProb[confidence] || 0.5;
+    const sentimentBoost = Math.min(0.15, Math.abs(sentiment || 0) * 0.15);
 
-  function getEventTimeframe(newsItem) {
-    const event = categorizeNewsEvent(newsItem);
-    const timeframes = {
-      Earnings: "1-2 days",
-      "FDA/Regulatory": "1-3 days",
-      Partnership: "1 day",
-      "M&A": "1-5 days",
-      "Analyst Action": "1-2 days",
-      "Clinical Trial": "1-3 days",
-      "Executive Change": "2-5 days",
-      "Product Launch": "1-3 days",
-      "Market News": "1 day",
-    };
-    return timeframes[event] || "1-2 days";
-  }
+    return Math.min(0.95, Math.max(0.05, prob + sentimentBoost));
+  }, []);
 
-  function determineSignal(nissScore) {
-    if (nissScore > 75) return "STRONG BUY";
-    if (nissScore > 60) return "BUY";
-    if (nissScore < -60) return "SELL";
-    if (nissScore < -75) return "STRONG SELL";
-    return "HOLD";
-  }
+  // Get event timeframe based on catalyst type
+  const getEventTimeframe = useCallback(
+    (newsItem) => {
+      const event = categorizeNewsEvent(newsItem);
+      const timeframes = {
+        Earnings: "1-2 days",
+        "FDA/Regulatory": "1-3 days",
+        Partnership: "1 day",
+        "M&A": "1-5 days",
+        "Analyst Action": "1-2 days",
+        "Clinical Trial": "1-3 days",
+        "Executive Change": "2-5 days",
+        "Product Launch": "1-3 days",
+        "Legal/Regulatory": "2-7 days",
+        "Financial Update": "1-2 days",
+        "Market News": "1 day",
+      };
+      return timeframes[event] || "1-2 days";
+    },
+    [categorizeNewsEvent]
+  );
 
-  function determineConfidence(nissScore) {
-    if (Math.abs(nissScore) > 75) return "HIGH";
-    if (Math.abs(nissScore) > 60) return "MEDIUM";
-    return "LOW";
-  }
+  // Source credibility scoring
+  const getSourceCredibility = useCallback((source) => {
+    if (!source) return 50;
 
-  function calculatePricePosition(quote) {
-    if (!quote) return "Unknown";
-    // Simplified calculation - in real implementation would use SMA data
-    const change = quote.changePercent || 0;
-    if (change > 2) return "Above Key Levels";
-    if (change < -2) return "Below Key Levels";
-    return "At Key Levels";
-  }
-
-  function getSourceCredibility(source) {
     const credibilityMap = {
       Reuters: 95,
       Bloomberg: 95,
-      WSJ: 90,
+      "Wall Street Journal": 90,
       "Financial Times": 90,
-      CNBC: 80,
-      MarketWatch: 75,
+      CNBC: 85,
+      MarketWatch: 80,
+      "Barron's": 85,
+      Forbes: 75,
       "Yahoo Finance": 70,
       "Seeking Alpha": 65,
       "The Motley Fool": 60,
+      Benzinga: 55,
+      InvestorPlace: 55,
     };
-    return credibilityMap[source] || 50;
-  }
 
-  function isBreakingNews(newsItem) {
-    const publishTime = newsItem.datetime
-      ? new Date(newsItem.datetime * 1000)
-      : new Date();
-    const now = new Date();
+    // Check if source contains any of the credible sources
+    const sourceUpper = source.toUpperCase();
+    for (const [key, value] of Object.entries(credibilityMap)) {
+      if (sourceUpper.includes(key.toUpperCase())) {
+        return value;
+      }
+    }
+
+    return 50; // Default credibility
+  }, []);
+
+  // Check if news is breaking (within last 2 hours)
+  const isBreakingNews = useCallback((newsItem) => {
+    if (!newsItem || !newsItem.datetime) return false;
+
+    const publishTime = newsItem.datetime * 1000; // Convert to milliseconds
+    const now = Date.now();
     const hoursSincePublished = (now - publishTime) / (1000 * 60 * 60);
+
     return hoursSincePublished < 2;
-  }
+  }, []);
 
-  function calculateMarketRelevance(newsItem, sector) {
-    const headline = (newsItem.headline || "").toLowerCase();
-    const sectorKeywords = {
-      technology: ["tech", "software", "cloud", "ai", "chip"],
-      healthcare: ["drug", "fda", "clinical", "therapy", "medical"],
-      automotive: ["ev", "electric", "vehicle", "auto", "battery"],
-    };
+  // Calculate market relevance based on sector and current market conditions
+  const calculateMarketRelevance = useCallback(
+    (newsItem, sector, marketRegime) => {
+      if (!newsItem || !newsItem.headline) return 50;
 
-    const keywords = sectorKeywords[sector?.toLowerCase()] || [];
-    const relevanceScore = keywords.reduce((score, keyword) => {
-      return headline.includes(keyword) ? score + 20 : score;
-    }, 50);
+      const headline = newsItem.headline.toLowerCase();
+      const sectorKeywords = {
+        technology: [
+          "tech",
+          "software",
+          "cloud",
+          "ai",
+          "chip",
+          "semiconductor",
+          "data",
+          "cyber",
+        ],
+        healthcare: [
+          "drug",
+          "fda",
+          "clinical",
+          "therapy",
+          "medical",
+          "biotech",
+          "pharma",
+          "vaccine",
+        ],
+        automotive: [
+          "ev",
+          "electric",
+          "vehicle",
+          "auto",
+          "battery",
+          "autonomous",
+          "tesla",
+        ],
+        financial: [
+          "bank",
+          "fed",
+          "interest",
+          "loan",
+          "mortgage",
+          "fintech",
+          "crypto",
+          "payment",
+        ],
+        energy: [
+          "oil",
+          "gas",
+          "renewable",
+          "solar",
+          "wind",
+          "energy",
+          "pipeline",
+          "drilling",
+        ],
+        retail: [
+          "consumer",
+          "retail",
+          "e-commerce",
+          "sales",
+          "inventory",
+          "supply chain",
+        ],
+        industrial: [
+          "manufacturing",
+          "industrial",
+          "aerospace",
+          "defense",
+          "infrastructure",
+        ],
+      };
 
-    return Math.min(100, relevanceScore);
-  }
+      let relevanceScore = 50; // Base score
 
-  function generateUpcomingCatalysts() {
-    return [
-      {
-        id: "upcoming-1",
-        ticker: "TSLA",
-        company: "Tesla Inc",
-        sector: "Automotive",
-        event: "Earnings",
-        headline: "Tesla Q3 2025 Earnings Release",
-        source: "Tesla IR",
-        publishedAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
-        sentiment: 0,
-        nissScore: 0,
-        confidence: "MEDIUM",
-        currentPrice: 245.5,
-        expectedImpact: { min: -8, max: 12, confidence: "MEDIUM" },
-        probability: 0.65,
-        timeframe: "1-2 days",
-        signal: "WATCH",
-        sourceCredibility: 95,
-        breakingNews: false,
-        marketRelevance: 85,
-        isUpcoming: true,
-        volumeRatio: "1.0",
-        pricePosition: "At Key Levels",
-      },
-      {
-        id: "upcoming-2",
-        ticker: "MRNA",
-        company: "Moderna Inc",
-        sector: "Healthcare",
-        event: "FDA/Regulatory",
-        headline: "FDA Decision on New mRNA Vaccine Platform Expected",
-        source: "FDA",
-        publishedAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
-        sentiment: 0.3,
-        nissScore: 0,
-        confidence: "HIGH",
-        currentPrice: 68.2,
-        expectedImpact: { min: -5, max: 25, confidence: "HIGH" },
-        probability: 0.8,
-        timeframe: "1-3 days",
-        signal: "WATCH",
-        sourceCredibility: 98,
-        breakingNews: false,
-        marketRelevance: 90,
-        isUpcoming: true,
-        volumeRatio: "1.0",
-        pricePosition: "At Key Levels",
-      },
-    ];
-  }
+      // Check sector-specific keywords
+      const keywords = sectorKeywords[sector?.toLowerCase()] || [];
+      const keywordMatches = keywords.filter((keyword) =>
+        headline.includes(keyword)
+      ).length;
+      relevanceScore += keywordMatches * 10;
 
-  // FIXED: Enhanced catalyst data processing
+      // Market regime adjustments
+      if (marketRegime) {
+        if (
+          marketRegime.volatility === "high" &&
+          headline.includes("volatility")
+        ) {
+          relevanceScore += 20;
+        }
+        if (
+          marketRegime.trend === "bullish" &&
+          (headline.includes("growth") || headline.includes("expansion"))
+        ) {
+          relevanceScore += 15;
+        }
+        if (
+          marketRegime.trend === "bearish" &&
+          (headline.includes("concern") || headline.includes("risk"))
+        ) {
+          relevanceScore += 15;
+        }
+      }
+
+      // Cap at 100
+      return Math.min(100, relevanceScore);
+    },
+    []
+  );
+  // Fetch additional market data from InstitutionalDataService
+  const fetchAdditionalMarketData = useCallback(async () => {
+    try {
+      setRefreshing(true);
+
+      // Get market regime for context
+      await InstitutionalDataService.updateMarketRegime();
+      const marketRegime = InstitutionalDataService.marketRegime;
+
+      // Fetch earnings calendar (you would need to add this to InstitutionalDataService)
+      // For now, we'll use the existing data structure
+      const earningsData = await fetchUpcomingEarnings();
+      setUpcomingEarnings(earningsData);
+
+      // Fetch market events
+      const events = await fetchMarketEvents();
+      setMarketEvents(events);
+
+      setLastRefresh(new Date());
+      setError(null);
+    } catch (err) {
+      console.error("Error fetching additional market data:", err);
+      setError("Failed to fetch market data");
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  // Fetch upcoming earnings from API
+  const fetchUpcomingEarnings = async () => {
+    // This would be replaced with actual API call through InstitutionalDataService
+    // For now, return empty array to avoid mock data
+    try {
+      // Example: const earnings = await InstitutionalDataService.getUpcomingEarnings();
+      return [];
+    } catch (error) {
+      console.error("Error fetching earnings:", error);
+      return [];
+    }
+  };
+
+  // Fetch market events from API
+  const fetchMarketEvents = async () => {
+    // This would be replaced with actual API call through InstitutionalDataService
+    try {
+      // Example: const events = await InstitutionalDataService.getMarketEvents();
+      return [];
+    } catch (error) {
+      console.error("Error fetching market events:", error);
+      return [];
+    }
+  };
+
+  // Refresh data on mount and when filters change
+  useEffect(() => {
+    fetchAdditionalMarketData();
+  }, [filters, refreshTrigger]);
+
+  // Auto-refresh every 5 minutes
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchAdditionalMarketData();
+    }, 5 * 60 * 1000);
+
+    return () => clearInterval(interval);
+  }, [fetchAdditionalMarketData]);
+
+  // Calculate price position relative to key technical levels
+  const calculatePricePosition = useCallback((quote, technicals) => {
+    if (!quote || !quote.price) return "Unknown";
+
+    const price = quote.price;
+    const sma20 = technicals?.sma20;
+    const sma50 = technicals?.sma50;
+    const sma200 = technicals?.sma200;
+
+    if (
+      sma200 &&
+      price > sma200 &&
+      sma50 &&
+      price > sma50 &&
+      sma20 &&
+      price > sma20
+    ) {
+      return "Above All MAs";
+    } else if (
+      sma200 &&
+      price < sma200 &&
+      sma50 &&
+      price < sma50 &&
+      sma20 &&
+      price < sma20
+    ) {
+      return "Below All MAs";
+    } else if (sma20 && price > sma20) {
+      return "Above Short-term MA";
+    } else if (sma20 && price < sma20) {
+      return "Below Short-term MA";
+    }
+
+    // Check relative to day's range
+    const dayRange = quote.high - quote.low;
+    const positionInRange = (price - quote.low) / dayRange;
+
+    if (positionInRange > 0.8) return "Near Day High";
+    if (positionInRange < 0.2) return "Near Day Low";
+
+    return "Mid-Range";
+  }, []);
+  // Enhanced catalyst data processing with real API data
   const processedCatalysts = useMemo(() => {
     const catalysts = [];
 
-    // Process screening results if available (from InstitutionalDataService)
+    // Process screening results from InstitutionalDataService
     if (screeningResults && screeningResults.length > 0) {
       screeningResults.forEach((stock) => {
-        // Enhanced destructuring to handle InstitutionalDataService structure
         const {
           symbol,
           nissScore = 0,
@@ -251,139 +534,111 @@ const CatalystAnalysisTab = ({
           tradeSetup = {},
           quote = {},
           news = [],
+          technicals = {},
           sector = "Unknown",
           company,
+          marketCap,
         } = stock;
 
-        // Create catalyst entries for each significant news item
-        news.slice(0, 3).forEach((newsItem, index) => {
-          const catalyst = {
-            id: `${symbol}-${index}`,
-            ticker: symbol,
-            company: company || getCompanyName(symbol),
-            sector: sector,
-            event: categorizeNewsEvent(newsItem),
-            headline: newsItem.headline || newsItem.title || "No headline",
-            source: newsItem.source || "Unknown",
-            publishedAt: newsItem.datetime
-              ? new Date(newsItem.datetime * 1000)
-              : new Date(),
-            sentiment: newsItem.sentiment || 0,
+        // Only process stocks with news
+        if (news && news.length > 0) {
+          // Limit to most relevant news items (top 3 by recency and relevance)
+          const sortedNews = [...news]
+            .sort((a, b) => {
+              // Sort by datetime (most recent first)
+              const timeA = a.datetime || 0;
+              const timeB = b.datetime || 0;
+              return timeB - timeA;
+            })
+            .slice(0, 3);
 
-            // Core Analysis - using InstitutionalDataService data
-            nissScore: nissScore,
-            confidence: nissData?.confidence || determineConfidence(nissScore),
-            currentPrice: quote?.price || 0,
-            changePercent: quote?.changePercent || 0,
-            volume: quote?.volume || 0,
-            avgVolume: quote?.avgVolume || quote?.volume || 0,
+          sortedNews.forEach((newsItem, index) => {
+            // Skip if no headline
+            if (!newsItem.headline && !newsItem.title) return;
 
-            // Impact Assessment
-            expectedImpact: calculateExpectedImpact(
-              newsItem,
-              nissScore,
-              quote?.changePercent
-            ),
-            probability: calculateProbability(
-              nissData?.confidence,
-              newsItem.sentiment
-            ),
-            timeframe: getEventTimeframe(newsItem),
-
-            // Trading Setup from InstitutionalDataService
-            signal: tradeSetup?.action || determineSignal(nissScore),
-            entry: tradeSetup?.entry || quote?.price,
-            stopLoss: tradeSetup?.stopLoss,
-            targets: tradeSetup?.targets || [],
-            riskReward: tradeSetup?.riskReward || 0,
-
-            // Key Metrics
-            volumeRatio:
-              quote?.volume && quote?.avgVolume
-                ? (quote.volume / quote.avgVolume).toFixed(1)
-                : "1.0",
-            pricePosition: calculatePricePosition(quote),
-
-            // News Quality Metrics
-            sourceCredibility: getSourceCredibility(newsItem.source),
-            breakingNews: isBreakingNews(newsItem),
-            marketRelevance: calculateMarketRelevance(newsItem, sector),
-
-            // Additional context
-            url: newsItem.url,
-            related: newsItem.related || [],
-          };
-
-          catalysts.push(catalyst);
-        });
-      });
-    }
-
-    // ALSO PROCESS stockData for backward compatibility (legacy DataService format)
-    if (stockData && Object.keys(stockData).length > 0) {
-      Object.entries(stockData).forEach(([symbol, data]) => {
-        // Only add if not already in screeningResults
-        const existsInScreening = screeningResults.some(
-          (s) => s.symbol === symbol
-        );
-        if (!existsInScreening && data.news && data.news.length > 0) {
-          // Process legacy stockData structure
-          data.news.slice(0, 2).forEach((newsItem, index) => {
             const catalyst = {
-              id: `${symbol}-legacy-${index}`,
+              id: `${symbol}-${newsItem.datetime || index}-${index}`,
               ticker: symbol,
-              company: getCompanyName(symbol),
-              sector: data.sector || "Unknown",
+              company: company || symbol,
+              sector: sector,
+              marketCap: marketCap,
+
+              // News data
               event: categorizeNewsEvent(newsItem),
               headline: newsItem.headline || newsItem.title || "No headline",
+              summary: newsItem.summary || "",
               source: newsItem.source || "Unknown",
               publishedAt: newsItem.datetime
                 ? new Date(newsItem.datetime * 1000)
                 : new Date(),
-              sentiment: newsItem.sentiment || 0,
+              url: newsItem.url || "",
 
-              // Use legacy data structure
-              nissScore: data.nissScore || 0,
-              confidence: determineConfidence(data.nissScore || 0),
-              currentPrice: data.quote?.price || 0,
-              changePercent: data.quote?.changePercent || 0,
-              volume: data.quote?.volume || 0,
-              avgVolume: data.quote?.avgVolume || data.quote?.volume || 0,
+              // Sentiment and scoring
+              sentiment: newsItem.sentiment || 0,
+              relevanceScore:
+                newsItem.relevanceScore ||
+                calculateMarketRelevance(
+                  newsItem,
+                  sector,
+                  InstitutionalDataService.marketRegime
+                ),
+
+              // Core Analysis from InstitutionalDataService
+              nissScore: nissScore,
+              confidence: nissData?.confidence || "LOW",
+              currentPrice: quote?.price || 0,
+              changePercent: quote?.changePercent || 0,
+              volume: quote?.volume || 0,
+              avgVolume: quote?.avgVolume || quote?.volume || 0,
 
               // Impact Assessment
               expectedImpact: calculateExpectedImpact(
                 newsItem,
-                data.nissScore || 0,
-                data.quote?.changePercent
+                nissScore,
+                quote?.changePercent,
+                technicals
               ),
               probability: calculateProbability(
-                determineConfidence(data.nissScore || 0),
+                nissData?.confidence,
                 newsItem.sentiment
               ),
               timeframe: getEventTimeframe(newsItem),
 
-              // Trading Setup
-              signal: determineSignal(data.nissScore || 0),
-              entry: data.quote?.price,
-              stopLoss: null,
-              targets: [],
-              riskReward: 0,
+              // Trading Setup from InstitutionalDataService
+              signal:
+                tradeSetup?.action ||
+                (nissScore > 60 ? "LONG" : nissScore < -60 ? "SHORT" : "HOLD"),
+              entry: tradeSetup?.entry || quote?.price,
+              stopLoss: tradeSetup?.stopLoss,
+              targets: tradeSetup?.targets || [],
+              riskReward: tradeSetup?.riskReward || 0,
+              reasoning: tradeSetup?.reasoning || "",
+
+              // Technical indicators
+              technicals: technicals || {},
 
               // Key Metrics
               volumeRatio:
-                data.quote?.volume && data.quote?.avgVolume
-                  ? (data.quote.volume / data.quote.avgVolume).toFixed(1)
+                quote?.volume && quote?.avgVolume
+                  ? (quote.volume / quote.avgVolume).toFixed(1)
                   : "1.0",
-              pricePosition: calculatePricePosition(data.quote),
+              pricePosition: calculatePricePosition(quote, technicals),
 
               // News Quality Metrics
               sourceCredibility: getSourceCredibility(newsItem.source),
               breakingNews: isBreakingNews(newsItem),
-              marketRelevance: calculateMarketRelevance(newsItem, data.sector),
+              marketRelevance: calculateMarketRelevance(
+                newsItem,
+                sector,
+                InstitutionalDataService.marketRegime
+              ),
 
-              // Additional context
-              url: newsItem.url,
-              related: newsItem.related || [],
+              // NISS Components for detailed view
+              nissComponents: nissData?.components || {},
+
+              // Additional metadata
+              isRealTime: true,
+              lastUpdate: new Date(),
             };
 
             catalysts.push(catalyst);
@@ -392,72 +647,107 @@ const CatalystAnalysisTab = ({
       });
     }
 
-    // Add mock upcoming catalysts for demonstration
-    const upcomingCatalysts = generateUpcomingCatalysts();
+    // Sort by recency and relevance
+    return catalysts.sort((a, b) => {
+      // First sort by breaking news
+      if (a.breakingNews && !b.breakingNews) return -1;
+      if (!a.breakingNews && b.breakingNews) return 1;
 
-    return [...catalysts, ...upcomingCatalysts];
-  }, [screeningResults, stockData]); // Both dependencies are important
+      // Then by publish time
+      return b.publishedAt - a.publishedAt;
+    });
+  }, [
+    screeningResults,
+    categorizeNewsEvent,
+    calculateExpectedImpact,
+    calculateProbability,
+    getEventTimeframe,
+    getSourceCredibility,
+    isBreakingNews,
+    calculateMarketRelevance,
+  ]);
 
-  // Rest of Part 2 stays the same...
-  // Filter and sort catalysts
+  // Enhanced filtering and sorting
   const filteredCatalysts = useMemo(() => {
     let filtered = processedCatalysts;
 
-    // Filter by view type
+    // Filter by view type (live feed shows recent, calendar shows upcoming)
     if (catalystView === "live") {
       const now = new Date();
       const cutoff = new Date(
         now.getTime() -
-          (timeframe === "24h" ? 24 : timeframe === "7d" ? 168 : 1) *
+          (timeframe === "1h"
+            ? 1
+            : timeframe === "24h"
+            ? 24
+            : timeframe === "7d"
+            ? 168
+            : 1) *
             60 *
             60 *
             1000
       );
       filtered = filtered.filter((c) => c.publishedAt >= cutoff);
-    } else if (catalystView === "calendar") {
-      const now = new Date();
-      const futureDate = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-      filtered = filtered.filter(
-        (c) => c.publishedAt >= now && c.publishedAt <= futureDate
-      );
     }
 
     // Filter by catalyst type
     if (catalystFilter !== "all") {
       filtered = filtered.filter((c) =>
-        c.event.toLowerCase().includes(catalystFilter)
+        c.event.toLowerCase().includes(catalystFilter.toLowerCase())
       );
     }
 
     // Filter by search query
     if (searchQuery) {
+      const query = searchQuery.toLowerCase();
       filtered = filtered.filter(
         (c) =>
-          c.ticker.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          c.company.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          c.headline.toLowerCase().includes(searchQuery.toLowerCase())
+          c.ticker.toLowerCase().includes(query) ||
+          c.company.toLowerCase().includes(query) ||
+          c.headline.toLowerCase().includes(query) ||
+          c.sector.toLowerCase().includes(query)
       );
+    }
+
+    // Apply confidence filter from parent
+    if (filters.minConfidence) {
+      filtered = filtered.filter((c) => {
+        if (filters.minConfidence === "HIGH") return c.confidence === "HIGH";
+        if (filters.minConfidence === "MEDIUM") return c.confidence !== "LOW";
+        return true;
+      });
     }
 
     // Sort catalysts
     filtered.sort((a, b) => {
+      let comparison = 0;
+
       switch (sortBy) {
         case "impact":
-          return (
-            Math.abs(b.expectedImpact.max) - Math.abs(a.expectedImpact.max)
-          );
+          comparison =
+            Math.abs(b.expectedImpact.max) - Math.abs(a.expectedImpact.max);
+          break;
         case "confidence":
           const confMap = { HIGH: 3, MEDIUM: 2, LOW: 1 };
-          return confMap[b.confidence] - confMap[a.confidence];
+          comparison = confMap[b.confidence] - confMap[a.confidence];
+          break;
         case "time":
-          return b.publishedAt - a.publishedAt;
+          comparison = b.publishedAt - a.publishedAt;
+          break;
         case "niss":
-          return Math.abs(b.nissScore) - Math.abs(a.nissScore);
+          comparison = Math.abs(b.nissScore) - Math.abs(a.nissScore);
+          break;
+        case "relevance":
+          comparison = b.marketRelevance - a.marketRelevance;
+          break;
+        case "volume":
+          comparison = parseFloat(b.volumeRatio) - parseFloat(a.volumeRatio);
+          break;
         default:
-          return (
-            Math.abs(b.expectedImpact.max) - Math.abs(a.expectedImpact.max)
-          );
+          comparison = b.publishedAt - a.publishedAt;
       }
+
+      return sortDirection === "desc" ? comparison : -comparison;
     });
 
     return filtered;
@@ -468,16 +758,64 @@ const CatalystAnalysisTab = ({
     timeframe,
     searchQuery,
     sortBy,
+    sortDirection,
+    filters,
   ]);
 
-  // Render catalyst impact visualization
-  const ImpactChart = ({ impact, signal }) => {
-    const maxImpact = Math.max(Math.abs(impact.min), Math.abs(impact.max));
-    const positiveWidth = impact.max > 0 ? (impact.max / maxImpact) * 100 : 0;
-    const negativeWidth =
-      impact.min < 0 ? (Math.abs(impact.min) / maxImpact) * 100 : 0;
+  // Calculate summary statistics
+  const summaryStats = useMemo(() => {
+    const stats = {
+      total: filteredCatalysts.length,
+      breaking: filteredCatalysts.filter((c) => c.breakingNews).length,
+      bullish: filteredCatalysts.filter(
+        (c) => c.signal === "LONG" || c.signal === "BUY"
+      ).length,
+      bearish: filteredCatalysts.filter(
+        (c) => c.signal === "SHORT" || c.signal === "SELL"
+      ).length,
+      highConfidence: filteredCatalysts.filter((c) => c.confidence === "HIGH")
+        .length,
+      byEvent: {},
+      avgNissScore: 0,
+      topSectors: [],
+    };
 
-    // Confidence-based coloring
+    // Calculate average NISS score
+    if (filteredCatalysts.length > 0) {
+      stats.avgNissScore =
+        filteredCatalysts.reduce((sum, c) => sum + Math.abs(c.nissScore), 0) /
+        filteredCatalysts.length;
+    }
+
+    // Count by event type
+    filteredCatalysts.forEach((c) => {
+      stats.byEvent[c.event] = (stats.byEvent[c.event] || 0) + 1;
+    });
+
+    // Top sectors by catalyst count
+    const sectorCounts = {};
+    filteredCatalysts.forEach((c) => {
+      sectorCounts[c.sector] = (sectorCounts[c.sector] || 0) + 1;
+    });
+    stats.topSectors = Object.entries(sectorCounts)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 3)
+      .map(([sector, count]) => ({ sector, count }));
+
+    return stats;
+  }, [filteredCatalysts]);
+  // Enhanced Impact Chart Component
+  const ImpactChart = ({ impact, signal }) => {
+    if (!impact) return null;
+
+    const maxImpact = Math.max(Math.abs(impact.min), Math.abs(impact.max));
+    const scale = maxImpact > 0 ? 100 / maxImpact : 1;
+
+    const positiveWidth =
+      impact.max > 0 ? Math.min(impact.max * scale, 100) : 0;
+    const negativeWidth =
+      impact.min < 0 ? Math.min(Math.abs(impact.min) * scale, 100) : 0;
+
     const getColorIntensity = (confidence) => {
       switch (confidence) {
         case "HIGH":
@@ -492,81 +830,141 @@ const CatalystAnalysisTab = ({
     };
 
     return (
-      <div className="flex items-center space-x-2 mt-1">
-        <span className="text-xs text-gray-500 w-8">
-          {impact.min.toFixed(0)}%
-        </span>
-        <div className="flex-1 h-4 bg-gray-200 rounded relative">
-          {/* Zero line - always visible */}
-          <div className="absolute left-1/2 top-0 w-0.5 h-full bg-gray-600 transform -translate-x-1/2 z-10" />
+      <div className="w-full">
+        <div className="flex items-center space-x-2 mb-1">
+          <span className="text-xs text-gray-500 w-12 text-right">
+            {impact.min.toFixed(1)}%
+          </span>
+          <div className="flex-1 h-4 bg-gray-200 rounded-full relative overflow-hidden">
+            {/* Zero line */}
+            <div className="absolute left-1/2 top-0 w-0.5 h-full bg-gray-400 transform -translate-x-1/2 z-10" />
 
-          {negativeWidth > 0 && (
-            <div
-              className={`absolute left-0 top-0 h-full bg-red-400 rounded-l ${getColorIntensity(
-                impact.confidence
-              )}`}
-              style={{ width: `${negativeWidth / 2}%`, right: "50%" }}
-            />
-          )}
-          {positiveWidth > 0 && (
-            <div
-              className={`absolute right-0 top-0 h-full bg-green-400 rounded-r ${getColorIntensity(
-                impact.confidence
-              )}`}
-              style={{ width: `${positiveWidth / 2}%`, left: "50%" }}
-            />
-          )}
+            {/* Negative impact */}
+            {negativeWidth > 0 && (
+              <div
+                className={`absolute right-1/2 top-0 h-full bg-red-500 ${getColorIntensity(
+                  impact.confidence
+                )}`}
+                style={{ width: `${negativeWidth / 2}%` }}
+              />
+            )}
+
+            {/* Positive impact */}
+            {positiveWidth > 0 && (
+              <div
+                className={`absolute left-1/2 top-0 h-full bg-green-500 ${getColorIntensity(
+                  impact.confidence
+                )}`}
+                style={{ width: `${positiveWidth / 2}%` }}
+              />
+            )}
+          </div>
+          <span className="text-xs text-gray-500 w-12">
+            +{impact.max.toFixed(1)}%
+          </span>
         </div>
-        <span className="text-xs text-gray-500 w-8">
-          +{impact.max.toFixed(0)}%
-        </span>
+        <div className="flex justify-between text-xs text-gray-600 mt-1">
+          <span>Probability: {(impact.probability * 100).toFixed(0)}%</span>
+          <span>{impact.confidence} confidence</span>
+        </div>
       </div>
     );
   };
 
-  // Render signal badge with color coding
-  const SignalBadge = ({ signal, confidence }) => {
-    const getSignalColors = () => {
-      if (signal.includes("BUY") || signal === "LONG")
-        return "bg-green-500 text-white";
-      if (signal.includes("SELL") || signal === "SHORT")
-        return "bg-red-500 text-white";
-      if (signal === "WATCH") return "bg-yellow-500 text-white";
-      return "bg-gray-500 text-white";
+  // Enhanced Signal Badge Component
+  const SignalBadge = ({ signal, confidence, riskReward }) => {
+    const getSignalStyle = () => {
+      if (signal === "LONG" || signal === "BUY" || signal === "STRONG BUY") {
+        return {
+          bg: confidence === "HIGH" ? "bg-green-600" : "bg-green-500",
+          text: "text-white",
+          icon: <TrendingUp className="h-3 w-3" />,
+        };
+      } else if (
+        signal === "SHORT" ||
+        signal === "SELL" ||
+        signal === "STRONG SELL"
+      ) {
+        return {
+          bg: confidence === "HIGH" ? "bg-red-600" : "bg-red-500",
+          text: "text-white",
+          icon: <TrendingDown className="h-3 w-3" />,
+        };
+      } else if (signal === "HOLD") {
+        return {
+          bg: "bg-gray-500",
+          text: "text-white",
+          icon: <TrendingFlat className="h-3 w-3" />,
+        };
+      }
+      return {
+        bg: "bg-yellow-500",
+        text: "text-white",
+        icon: <AlertCircle className="h-3 w-3" />,
+      };
     };
 
-    const getConfidenceColors = () => {
-      switch (confidence) {
-        case "HIGH":
-          return "text-green-600 bg-green-50";
-        case "MEDIUM":
-          return "text-yellow-600 bg-yellow-50";
-        case "LOW":
-          return "text-red-600 bg-red-50";
-        default:
-          return "text-gray-600 bg-gray-50";
-      }
-    };
+    const style = getSignalStyle();
 
     return (
       <div className="flex items-center space-x-2">
         <span
-          className={`px-2 py-1 rounded-full text-xs font-bold ${getSignalColors()}`}
+          className={`${style.bg} ${style.text} px-3 py-1 rounded-full text-xs font-bold flex items-center space-x-1`}
         >
-          {signal}
+          {style.icon}
+          <span>{signal}</span>
         </span>
-        <span
-          className={`px-2 py-1 rounded text-xs font-medium ${getConfidenceColors()}`}
-        >
-          {confidence}
-        </span>
+        {confidence && (
+          <span
+            className={`text-xs font-medium ${
+              confidence === "HIGH"
+                ? "text-green-600"
+                : confidence === "MEDIUM"
+                ? "text-yellow-600"
+                : "text-gray-600"
+            }`}
+          >
+            {confidence}
+          </span>
+        )}
+        {riskReward > 0 && (
+          <span className="text-xs text-blue-600 font-medium">
+            R:R {riskReward.toFixed(1)}
+          </span>
+        )}
       </div>
     );
   };
 
+  // News Source Badge Component
+  const SourceBadge = ({ source, credibility, isBreaking }) => {
+    const getCredibilityColor = () => {
+      if (credibility >= 90) return "text-green-600 bg-green-50";
+      if (credibility >= 75) return "text-blue-600 bg-blue-50";
+      if (credibility >= 60) return "text-yellow-600 bg-yellow-50";
+      return "text-gray-600 bg-gray-50";
+    };
+
+    return (
+      <div className="flex items-center space-x-2">
+        <span className={`text-xs px-2 py-1 rounded ${getCredibilityColor()}`}>
+          {source}
+        </span>
+        {isBreaking && (
+          <span className="text-xs px-2 py-1 rounded bg-red-100 text-red-600 font-medium animate-pulse">
+            BREAKING
+          </span>
+        )}
+        <div className="flex items-center text-xs text-gray-500">
+          <Shield className="h-3 w-3 mr-1" />
+          {credibility}%
+        </div>
+      </div>
+    );
+  };
   return (
     <div className="space-y-6">
-      {/* Catalyst Analytics Header */}
+      {/* Enhanced Header with Real-time Stats */}
       <div className="bg-white rounded-lg shadow p-6">
         <div className="flex justify-between items-center mb-4">
           <div>
@@ -574,23 +972,26 @@ const CatalystAnalysisTab = ({
               Catalyst Analysis
             </h2>
             <p className="text-sm text-gray-600 mt-1">
-              Real-time news impact analysis with institutional-grade scoring
+              Real-time institutional-grade news impact analysis
             </p>
           </div>
           <div className="flex items-center space-x-3">
+            <div className="text-sm text-gray-500">
+              Last update: {lastRefresh.toLocaleTimeString()}
+            </div>
             <button
-              onClick={() => window.location.reload()}
-              className="p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100"
-              disabled={loading}
+              onClick={fetchAdditionalMarketData}
+              className="p-2 text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
+              disabled={refreshing}
             >
               <RefreshCw
-                className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
+                className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
               />
             </button>
           </div>
         </div>
 
-        {/* Quick Stats */}
+        {/* Quick Stats Cards */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <div className="bg-blue-50 p-4 rounded-lg">
             <div className="flex items-center">
@@ -598,7 +999,10 @@ const CatalystAnalysisTab = ({
               <div>
                 <p className="text-sm text-blue-600">Active Catalysts</p>
                 <p className="text-xl font-bold text-blue-900">
-                  {filteredCatalysts.length}
+                  {summaryStats.total}
+                </p>
+                <p className="text-xs text-blue-700 mt-1">
+                  {summaryStats.breaking} breaking
                 </p>
               </div>
             </div>
@@ -610,10 +1014,10 @@ const CatalystAnalysisTab = ({
               <div>
                 <p className="text-sm text-green-600">Bullish Signals</p>
                 <p className="text-xl font-bold text-green-900">
-                  {
-                    filteredCatalysts.filter((c) => c.signal.includes("BUY"))
-                      .length
-                  }
+                  {summaryStats.bullish}
+                </p>
+                <p className="text-xs text-green-700 mt-1">
+                  {summaryStats.highConfidence} high conf
                 </p>
               </div>
             </div>
@@ -625,10 +1029,7 @@ const CatalystAnalysisTab = ({
               <div>
                 <p className="text-sm text-red-600">Bearish Signals</p>
                 <p className="text-xl font-bold text-red-900">
-                  {
-                    filteredCatalysts.filter((c) => c.signal.includes("SELL"))
-                      .length
-                  }
+                  {summaryStats.bearish}
                 </p>
               </div>
             </div>
@@ -638,12 +1039,9 @@ const CatalystAnalysisTab = ({
             <div className="flex items-center">
               <Star className="h-5 w-5 text-purple-600 mr-2" />
               <div>
-                <p className="text-sm text-purple-600">High Confidence</p>
+                <p className="text-sm text-purple-600">Avg NISS</p>
                 <p className="text-xl font-bold text-purple-900">
-                  {
-                    filteredCatalysts.filter((c) => c.confidence === "HIGH")
-                      .length
-                  }
+                  {summaryStats.avgNissScore.toFixed(0)}
                 </p>
               </div>
             </div>
@@ -653,41 +1051,62 @@ const CatalystAnalysisTab = ({
             <div className="flex items-center">
               <Bell className="h-5 w-5 text-orange-600 mr-2" />
               <div>
-                <p className="text-sm text-orange-600">Breaking News</p>
-                <p className="text-xl font-bold text-orange-900">
-                  {filteredCatalysts.filter((c) => c.breakingNews).length}
+                <p className="text-sm text-orange-600">Top Sector</p>
+                <p className="text-lg font-bold text-orange-900">
+                  {summaryStats.topSectors[0]?.sector || "N/A"}
+                </p>
+                <p className="text-xs text-orange-700 mt-1">
+                  {summaryStats.topSectors[0]?.count || 0} events
                 </p>
               </div>
             </div>
           </div>
         </div>
+
+        {/* Event Type Distribution */}
+        {Object.keys(summaryStats.byEvent).length > 0 && (
+          <div className="mt-4 pt-4 border-t">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-medium text-gray-700">
+                Event Distribution
+              </h3>
+              <span className="text-xs text-gray-500">Last {timeframe}</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(summaryStats.byEvent)
+                .sort(([, a], [, b]) => b - a)
+                .map(([event, count]) => (
+                  <span
+                    key={event}
+                    className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800"
+                  >
+                    {event}: {count}
+                  </span>
+                ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Main Content Area - Split Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Live Feed - 60% width */}
-        <div className="lg:col-span-7">
-          {/* Controls */}
+        {/* Live Feed - Main Content */}
+        <div className="lg:col-span-8">
+          {/* Enhanced Controls */}
           <div className="bg-white rounded-lg shadow p-4 mb-6">
             <div className="flex flex-wrap items-center gap-4">
-              {/* View Toggle */}
-              <div className="flex items-center space-x-1 bg-gray-100 rounded-lg p-1">
-                {[{ key: "live", label: "Live Feed", icon: Activity }].map(
-                  ({ key, label, icon: Icon }) => (
-                    <button
-                      key={key}
-                      onClick={() => setCatalystView(key)}
-                      className={`px-3 py-2 text-sm font-medium rounded-md flex items-center space-x-1 transition-colors ${
-                        catalystView === key
-                          ? "bg-white text-blue-600 shadow-sm"
-                          : "text-gray-600 hover:text-gray-900"
-                      }`}
-                    >
-                      <Icon className="h-4 w-4" />
-                      <span>{label}</span>
-                    </button>
-                  )
-                )}
+              {/* Search Bar */}
+              <div className="flex-1 min-w-[200px]">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Search by symbol, company, or keyword..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
               </div>
 
               {/* Filters */}
@@ -700,8 +1119,13 @@ const CatalystAnalysisTab = ({
                 <option value="earnings">Earnings</option>
                 <option value="fda">FDA/Regulatory</option>
                 <option value="partnership">Partnerships</option>
+                <option value="m&a">M&A</option>
                 <option value="analyst">Analyst Actions</option>
                 <option value="clinical">Clinical Trials</option>
+                <option value="product">Product Launch</option>
+                <option value="executive">Executive Change</option>
+                <option value="legal">Legal/Regulatory</option>
+                <option value="financial">Financial Update</option>
               </select>
 
               <select
@@ -719,14 +1143,31 @@ const CatalystAnalysisTab = ({
                 onChange={(e) => setSortBy(e.target.value)}
                 className="text-sm border rounded-lg px-3 py-2"
               >
+                <option value="time">Time (Recent First)</option>
                 <option value="impact">Expected Impact</option>
                 <option value="confidence">Confidence Level</option>
-                <option value="time">Time Published</option>
                 <option value="niss">NISS Score</option>
+                <option value="relevance">Market Relevance</option>
+                <option value="volume">Volume Activity</option>
               </select>
+
+              <button
+                onClick={() =>
+                  setSortDirection(sortDirection === "desc" ? "asc" : "desc")
+                }
+                className="p-2 border rounded-lg hover:bg-gray-50"
+                title={`Sort ${
+                  sortDirection === "desc" ? "ascending" : "descending"
+                }`}
+              >
+                {sortDirection === "desc" ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronRight className="h-4 w-4" />
+                )}
+              </button>
             </div>
           </div>
-
           {/* Live Feed Content */}
           <div className="bg-white rounded-lg shadow">
             <div className="px-6 py-4 border-b">
@@ -734,15 +1175,37 @@ const CatalystAnalysisTab = ({
                 Live Catalyst Feed
               </h3>
               <p className="text-sm text-gray-600 mt-1">
-                {filteredCatalysts.length} catalysts found
+                {loading ? (
+                  <span className="flex items-center">
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Loading catalysts...
+                  </span>
+                ) : error ? (
+                  <span className="text-red-600">{error}</span>
+                ) : (
+                  `${filteredCatalysts.length} catalysts found`
+                )}
               </p>
             </div>
 
             <div className="divide-y divide-gray-200 max-h-[800px] overflow-y-auto">
               {loading ? (
                 <div className="p-8 text-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-                  <p className="mt-2 text-gray-600">Analyzing catalysts...</p>
+                  <Loader2 className="h-8 w-8 animate-spin mx-auto text-blue-600" />
+                  <p className="mt-2 text-gray-600">
+                    Analyzing market catalysts...
+                  </p>
+                </div>
+              ) : error ? (
+                <div className="p-8 text-center">
+                  <AlertTriangle className="h-12 w-12 mx-auto mb-4 text-red-500" />
+                  <p className="text-red-600">{error}</p>
+                  <button
+                    onClick={fetchAdditionalMarketData}
+                    className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  >
+                    Retry
+                  </button>
                 </div>
               ) : filteredCatalysts.length === 0 ? (
                 <div className="p-8 text-center text-gray-500">
@@ -756,7 +1219,12 @@ const CatalystAnalysisTab = ({
                 filteredCatalysts.map((catalyst) => (
                   <div
                     key={catalyst.id}
-                    className="p-6 hover:bg-gray-50 transition-colors"
+                    className="p-6 hover:bg-gray-50 transition-colors cursor-pointer"
+                    onClick={() =>
+                      setExpandedCatalyst(
+                        expandedCatalyst?.id === catalyst.id ? null : catalyst
+                      )
+                    }
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
@@ -768,7 +1236,7 @@ const CatalystAnalysisTab = ({
                                 {catalyst.ticker}
                               </h4>
                               <p className="text-sm text-gray-600">
-                                {catalyst.company}
+                                {catalyst.company} • {catalyst.sector}
                               </p>
                             </div>
                             <span className="px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded-full">
@@ -777,6 +1245,7 @@ const CatalystAnalysisTab = ({
                             <SignalBadge
                               signal={catalyst.signal}
                               confidence={catalyst.confidence}
+                              riskReward={catalyst.riskReward}
                             />
                           </div>
                           <div className="text-right">
@@ -787,7 +1256,9 @@ const CatalystAnalysisTab = ({
                               className={`text-sm font-medium ${
                                 catalyst.changePercent > 0
                                   ? "text-green-600"
-                                  : "text-red-600"
+                                  : catalyst.changePercent < 0
+                                  ? "text-red-600"
+                                  : "text-gray-600"
                               }`}
                             >
                               {catalyst.changePercent > 0 ? "+" : ""}
@@ -798,23 +1269,37 @@ const CatalystAnalysisTab = ({
 
                         {/* News Headline */}
                         <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-                          <h5 className="font-medium text-gray-900 mb-1">
+                          <h5 className="font-medium text-gray-900 mb-2 line-clamp-2">
                             {catalyst.headline}
                           </h5>
-                          <div className="flex items-center space-x-4 text-xs text-gray-500">
-                            <span className="font-medium">
-                              {catalyst.source}
-                            </span>
-                            <span>{catalyst.publishedAt.toLocaleString()}</span>
-                            <span className="flex items-center">
-                              <Star className="h-3 w-3 mr-1" />
-                              Credibility: {catalyst.sourceCredibility}%
-                            </span>
-                            {catalyst.breakingNews && (
-                              <span className="px-2 py-1 bg-red-100 text-red-600 rounded-full">
-                                BREAKING
-                              </span>
+                          {catalyst.summary &&
+                            expandedCatalyst?.id === catalyst.id && (
+                              <p className="text-sm text-gray-700 mb-2">
+                                {catalyst.summary}
+                              </p>
                             )}
+                          <div className="flex items-center justify-between">
+                            <SourceBadge
+                              source={catalyst.source}
+                              credibility={catalyst.sourceCredibility}
+                              isBreaking={catalyst.breakingNews}
+                            />
+                            <div className="flex items-center space-x-3 text-xs text-gray-500">
+                              <span>
+                                {catalyst.publishedAt.toLocaleString()}
+                              </span>
+                              {catalyst.url && (
+                                <a
+                                  href={catalyst.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-blue-600 hover:text-blue-800 flex items-center"
+                                >
+                                  <ExternalLink className="h-3 w-3" />
+                                </a>
+                              )}
+                            </div>
                           </div>
                         </div>
 
@@ -829,8 +1314,6 @@ const CatalystAnalysisTab = ({
                               signal={catalyst.signal}
                             />
                             <p className="text-xs text-gray-600">
-                              Probability:{" "}
-                              {(catalyst.probability * 100).toFixed(0)}% |
                               Timeframe: {catalyst.timeframe}
                             </p>
                           </div>
@@ -856,7 +1339,15 @@ const CatalystAnalysisTab = ({
                               </div>
                               <div className="flex justify-between">
                                 <span>Volume Ratio:</span>
-                                <span>{catalyst.volumeRatio}x</span>
+                                <span
+                                  className={
+                                    parseFloat(catalyst.volumeRatio) > 2
+                                      ? "font-bold"
+                                      : ""
+                                  }
+                                >
+                                  {catalyst.volumeRatio}x
+                                </span>
                               </div>
                               <div className="flex justify-between">
                                 <span>Price Position:</span>
@@ -865,37 +1356,336 @@ const CatalystAnalysisTab = ({
                                 </span>
                               </div>
                               <div className="flex justify-between">
-                                <span>Sentiment:</span>
+                                <span>Market Relevance:</span>
                                 <span
-                                  className={`${
-                                    catalyst.sentiment > 0.3
+                                  className={`font-medium ${
+                                    catalyst.marketRelevance > 80
                                       ? "text-green-600"
-                                      : catalyst.sentiment < -0.3
-                                      ? "text-red-600"
+                                      : catalyst.marketRelevance > 60
+                                      ? "text-blue-600"
                                       : "text-gray-600"
                                   }`}
                                 >
-                                  {catalyst.sentiment?.toFixed(2) || "Neutral"}
+                                  {catalyst.marketRelevance}%
                                 </span>
                               </div>
                             </div>
                           </div>
                         </div>
+                        {/* Expanded Details */}
+                        {expandedCatalyst?.id === catalyst.id && (
+                          <div className="mt-4 pt-4 border-t space-y-4">
+                            {/* Trading Setup */}
+                            {catalyst.signal !== "HOLD" && (
+                              <div className="bg-blue-50 p-4 rounded-lg">
+                                <h6 className="text-sm font-semibold text-blue-900 mb-2">
+                                  Trading Setup
+                                </h6>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                                  <div>
+                                    <span className="text-blue-700">
+                                      Entry:
+                                    </span>
+                                    <p className="font-bold text-blue-900">
+                                      ${catalyst.entry?.toFixed(2) || "Market"}
+                                    </p>
+                                  </div>
+                                  <div>
+                                    <span className="text-blue-700">
+                                      Stop Loss:
+                                    </span>
+                                    <p className="font-bold text-red-600">
+                                      ${catalyst.stopLoss?.toFixed(2) || "N/A"}
+                                    </p>
+                                  </div>
+                                  {catalyst.targets &&
+                                    catalyst.targets.length > 0 && (
+                                      <div>
+                                        <span className="text-blue-700">
+                                          Target 1:
+                                        </span>
+                                        <p className="font-bold text-green-600">
+                                          $
+                                          {catalyst.targets[0]?.price?.toFixed(
+                                            2
+                                          ) || "N/A"}
+                                        </p>
+                                      </div>
+                                    )}
+                                  <div>
+                                    <span className="text-blue-700">
+                                      R:R Ratio:
+                                    </span>
+                                    <p className="font-bold text-blue-900">
+                                      1:
+                                      {catalyst.riskReward?.toFixed(1) || "N/A"}
+                                    </p>
+                                  </div>
+                                </div>
+                                {catalyst.reasoning && (
+                                  <p className="text-sm text-blue-800 mt-2">
+                                    {catalyst.reasoning}
+                                  </p>
+                                )}
+                              </div>
+                            )}
 
-                        {/* Link to Source */}
-                        {catalyst.url && (
-                          <div className="mt-4 pt-4 border-t">
-                            <a
-                              href={catalyst.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 hover:text-blue-800 text-sm font-medium inline-flex items-center"
-                            >
-                              Read Full Article
-                              <ExternalLink className="h-3 w-3 ml-1" />
-                            </a>
+                            {/* NISS Components */}
+                            {catalyst.nissComponents &&
+                              Object.keys(catalyst.nissComponents).length >
+                                0 && (
+                                <div className="bg-gray-50 p-4 rounded-lg">
+                                  <h6 className="text-sm font-semibold text-gray-900 mb-2">
+                                    NISS Score Components
+                                  </h6>
+                                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                                    {Object.entries(
+                                      catalyst.nissComponents
+                                    ).map(([key, value]) => (
+                                      <div key={key} className="text-xs">
+                                        <span className="text-gray-600 capitalize">
+                                          {key
+                                            .replace(/([A-Z])/g, " $1")
+                                            .trim()}
+                                          :
+                                        </span>
+                                        <div className="flex items-center mt-1">
+                                          <div className="flex-1 bg-gray-200 rounded-full h-2 mr-2">
+                                            <div
+                                              className={`h-2 rounded-full ${
+                                                value > 70
+                                                  ? "bg-green-500"
+                                                  : value > 50
+                                                  ? "bg-blue-500"
+                                                  : value > 30
+                                                  ? "bg-yellow-500"
+                                                  : "bg-red-500"
+                                              }`}
+                                              style={{
+                                                width: `${Math.min(
+                                                  value,
+                                                  100
+                                                )}%`,
+                                              }}
+                                            />
+                                          </div>
+                                          <span className="font-medium w-8">
+                                            {value?.toFixed(0)}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                            {/* Technical Indicators */}
+                            {catalyst.technicals &&
+                              Object.keys(catalyst.technicals).length > 0 && (
+                                <div className="bg-gray-50 p-4 rounded-lg">
+                                  <h6 className="text-sm font-semibold text-gray-900 mb-2">
+                                    Technical Indicators
+                                  </h6>
+                                  <div className="grid grid-cols-3 md:grid-cols-6 gap-2 text-xs">
+                                    {catalyst.technicals.rsi && (
+                                      <div>
+                                        <span className="text-gray-600">
+                                          RSI:
+                                        </span>
+                                        <p
+                                          className={`font-bold ${
+                                            catalyst.technicals.rsi > 70
+                                              ? "text-red-600"
+                                              : catalyst.technicals.rsi < 30
+                                              ? "text-green-600"
+                                              : "text-gray-900"
+                                          }`}
+                                        >
+                                          {catalyst.technicals.rsi.toFixed(0)}
+                                        </p>
+                                      </div>
+                                    )}
+                                    {catalyst.technicals.atr && (
+                                      <div>
+                                        <span className="text-gray-600">
+                                          ATR:
+                                        </span>
+                                        <p className="font-bold">
+                                          ${catalyst.technicals.atr.toFixed(2)}
+                                        </p>
+                                      </div>
+                                    )}
+                                    {catalyst.technicals.adx && (
+                                      <div>
+                                        <span className="text-gray-600">
+                                          ADX:
+                                        </span>
+                                        <p className="font-bold">
+                                          {catalyst.technicals.adx.toFixed(0)}
+                                        </p>
+                                      </div>
+                                    )}
+                                    {catalyst.technicals.macd !== undefined && (
+                                      <div>
+                                        <span className="text-gray-600">
+                                          MACD:
+                                        </span>
+                                        <p
+                                          className={`font-bold ${
+                                            catalyst.technicals.macd >
+                                            catalyst.technicals.macdSignal
+                                              ? "text-green-600"
+                                              : "text-red-600"
+                                          }`}
+                                        >
+                                          {catalyst.technicals.macd >
+                                          catalyst.technicals.macdSignal
+                                            ? "Bullish"
+                                            : "Bearish"}
+                                        </p>
+                                      </div>
+                                    )}
+                                    {catalyst.technicals.sma20 && (
+                                      <div>
+                                        <span className="text-gray-600">
+                                          SMA20:
+                                        </span>
+                                        <p className="font-bold">
+                                          $
+                                          {catalyst.technicals.sma20.toFixed(2)}
+                                        </p>
+                                      </div>
+                                    )}
+                                    {catalyst.technicals.sma50 && (
+                                      <div>
+                                        <span className="text-gray-600">
+                                          SMA50:
+                                        </span>
+                                        <p className="font-bold">
+                                          $
+                                          {catalyst.technicals.sma50.toFixed(2)}
+                                        </p>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+
+                            {/* Market Cap Info */}
+                            {catalyst.marketCap && (
+                              <div className="flex items-center justify-between text-sm bg-gray-50 p-3 rounded-lg">
+                                <span className="text-gray-600">
+                                  Market Cap:
+                                </span>
+                                <span className="font-bold">
+                                  {catalyst.marketCap >= 1e12
+                                    ? `$${(catalyst.marketCap / 1e12).toFixed(
+                                        1
+                                      )}T`
+                                    : catalyst.marketCap >= 1e9
+                                    ? `$${(catalyst.marketCap / 1e9).toFixed(
+                                        1
+                                      )}B`
+                                    : catalyst.marketCap >= 1e6
+                                    ? `$${(catalyst.marketCap / 1e6).toFixed(
+                                        1
+                                      )}M`
+                                    : `$${(catalyst.marketCap / 1e3).toFixed(
+                                        1
+                                      )}K`}
+                                </span>
+                              </div>
+                            )}
+
+                            {/* Additional Targets if available */}
+                            {catalyst.targets &&
+                              catalyst.targets.length > 1 && (
+                                <div className="bg-green-50 p-4 rounded-lg">
+                                  <h6 className="text-sm font-semibold text-green-900 mb-2">
+                                    Price Targets
+                                  </h6>
+                                  <div className="space-y-2">
+                                    {catalyst.targets.map((target, idx) => (
+                                      <div
+                                        key={idx}
+                                        className="flex justify-between items-center text-sm"
+                                      >
+                                        <div className="flex items-center">
+                                          <Target className="h-3 w-3 mr-2 text-green-600" />
+                                          <span className="text-green-700">
+                                            Target {target.level}:
+                                          </span>
+                                        </div>
+                                        <div className="text-right">
+                                          <span className="font-bold text-green-900">
+                                            ${target.price?.toFixed(2)}
+                                          </span>
+                                          <span className="text-xs text-green-600 ml-2">
+                                            ({target.action})
+                                          </span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                            {/* Sentiment Analysis */}
+                            {catalyst.sentiment !== undefined && (
+                              <div className="flex items-center justify-between text-sm bg-gray-50 p-3 rounded-lg">
+                                <span className="text-gray-600">
+                                  News Sentiment:
+                                </span>
+                                <div className="flex items-center">
+                                  <div className="w-24 bg-gray-200 rounded-full h-2 mr-2">
+                                    <div
+                                      className={`h-2 rounded-full ${
+                                        catalyst.sentiment > 0
+                                          ? "bg-green-500"
+                                          : "bg-red-500"
+                                      }`}
+                                      style={{
+                                        width: `${
+                                          Math.abs(catalyst.sentiment) * 100
+                                        }%`,
+                                        marginLeft:
+                                          catalyst.sentiment < 0 ? "auto" : 0,
+                                      }}
+                                    />
+                                  </div>
+                                  <span
+                                    className={`font-bold ${
+                                      catalyst.sentiment > 0.3
+                                        ? "text-green-600"
+                                        : catalyst.sentiment < -0.3
+                                        ? "text-red-600"
+                                        : "text-gray-600"
+                                    }`}
+                                  >
+                                    {catalyst.sentiment.toFixed(2)}
+                                  </span>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
+
+                        {/* Expand/Collapse Indicator */}
+                        <div className="mt-3 text-center">
+                          <button className="text-xs text-blue-600 hover:text-blue-800">
+                            {expandedCatalyst?.id === catalyst.id ? (
+                              <span className="flex items-center justify-center">
+                                <ChevronDown className="h-4 w-4 mr-1" />
+                                Show Less
+                              </span>
+                            ) : (
+                              <span className="flex items-center justify-center">
+                                <ChevronRight className="h-4 w-4 mr-1" />
+                                Show More Details
+                              </span>
+                            )}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -904,227 +1694,160 @@ const CatalystAnalysisTab = ({
             </div>
           </div>
         </div>
-        {/* Calendar Sidebar - 35% width */}
-        <div className="lg:col-span-5">
-          <div className="bg-white rounded-lg shadow">
+        {/* Calendar Sidebar - Right Column */}
+        <div className="lg:col-span-4">
+          <div className="bg-white rounded-lg shadow sticky top-4">
             <div className="px-6 py-4 border-b">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 flex items-center">
                     <Calendar className="h-5 w-5 mr-2" />
-                    Upcoming Events
+                    Market Calendar
                   </h3>
                   <p className="text-sm text-gray-600 mt-1">
-                    Next 7 days calendar
+                    Upcoming events & schedule
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="divide-y divide-gray-200 max-h-[600px] overflow-y-auto">
-              {/* Upcoming Earnings */}
+            <div className="divide-y divide-gray-200 max-h-[700px] overflow-y-auto">
+              {/* Upcoming Earnings Section */}
               <div className="p-4">
                 <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center">
                   <DollarSign className="h-4 w-4 mr-1" />
                   Earnings This Week
                 </h4>
-                <div className="space-y-3">
-                  {[
-                    {
-                      ticker: "TSLA",
-                      date: "Jul 24",
-                      time: "21:30 BST",
-                      consensus: "$0.85",
-                      whisper: "$0.92",
-                      implied: "±6.2%",
-                    },
-                    {
-                      ticker: "MSFT",
-                      date: "Jul 25",
-                      time: "22:00 BST",
-                      consensus: "$2.95",
-                      whisper: "$3.02",
-                      implied: "±4.8%",
-                    },
-                    {
-                      ticker: "META",
-                      date: "Jul 26",
-                      time: "21:00 BST",
-                      consensus: "$4.52",
-                      whisper: "$4.68",
-                      implied: "±7.1%",
-                    },
-                    {
-                      ticker: "PLTR",
-                      date: "Jul 29",
-                      time: "21:00 BST",
-                      consensus: "$0.14",
-                      whisper: "$0.16",
-                      implied: "±8.5%",
-                    },
-                  ].map((earning) => (
-                    <div
-                      key={earning.ticker}
-                      className="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-semibold text-gray-900">
-                          {earning.ticker}
-                        </span>
-                        <span className="text-sm text-gray-600">
-                          {earning.date} • {earning.time}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2 text-xs">
-                        <div>
-                          <span className="text-gray-500">Consensus:</span>
-                          <div className="font-medium">{earning.consensus}</div>
+                {refreshing ? (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+                  </div>
+                ) : upcomingEarnings.length > 0 ? (
+                  <div className="space-y-3">
+                    {upcomingEarnings.map((earning, idx) => (
+                      <div
+                        key={idx}
+                        className="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-semibold text-gray-900">
+                            {earning.symbol}
+                          </span>
+                          <span className="text-sm text-gray-600">
+                            {earning.date} • {earning.time}
+                          </span>
                         </div>
-                        <div>
-                          <span className="text-gray-500">Whisper:</span>
-                          <div className="font-medium text-blue-600">
-                            {earning.whisper}
+                        <div className="grid grid-cols-3 gap-2 text-xs">
+                          <div>
+                            <span className="text-gray-500">Consensus:</span>
+                            <div className="font-medium">
+                              ${earning.consensus}
+                            </div>
                           </div>
-                        </div>
-                        <div>
-                          <span className="text-gray-500">Implied Move:</span>
-                          <div className="font-medium text-purple-600">
-                            {earning.implied}
+                          <div>
+                            <span className="text-gray-500">Previous:</span>
+                            <div className="font-medium">
+                              ${earning.previous}
+                            </div>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Est. Move:</span>
+                            <div className="font-medium text-purple-600">
+                              ±{earning.impliedMove}%
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-4">
+                    <p className="text-sm text-gray-500">
+                      No earnings data available
+                    </p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Check back later for updates
+                    </p>
+                  </div>
+                )}
               </div>
 
-              {/* FDA/Regulatory Events */}
-              <div className="p-4">
-                <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center">
-                  <Target className="h-4 w-4 mr-1" />
-                  Regulatory Events
-                </h4>
-                <div className="space-y-3">
-                  {[
-                    {
-                      ticker: "MRNA",
-                      event: "FDA Vaccine Decision",
-                      date: "Jul 23",
-                      impact: "High",
-                      probability: "75%",
-                    },
-                    {
-                      ticker: "VKTX",
-                      event: "Clinical Trial Results",
-                      date: "Jul 27",
-                      impact: "Very High",
-                      probability: "85%",
-                    },
-                  ].map((event, idx) => (
-                    <div
-                      key={idx}
-                      className="p-3 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-semibold text-gray-900">
-                          {event.ticker}
-                        </span>
-                        <span className="text-sm text-gray-600">
-                          {event.date}
-                        </span>
-                      </div>
-                      <p className="text-sm text-gray-700 mb-2">
-                        {event.event}
-                      </p>
-                      <div className="flex items-center justify-between text-xs">
-                        <span
-                          className={`px-2 py-1 rounded-full ${
-                            event.impact === "Very High"
-                              ? "bg-red-100 text-red-600"
-                              : "bg-orange-100 text-orange-600"
-                          }`}
-                        >
-                          {event.impact} Impact
-                        </span>
-                        <span className="text-gray-600">
-                          {event.probability} probability
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Market Events */}
+              {/* Market Events Section */}
               <div className="p-4">
                 <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center">
                   <BarChart2 className="h-4 w-4 mr-1" />
                   Market Events
                 </h4>
-                <div className="space-y-3">
-                  {[
-                    {
-                      event: "Fed Interest Rate Decision",
-                      date: "Jul 31",
-                      time: "19:00 BST",
-                      impact: "Market-wide",
-                    },
-                    {
-                      event: "Non-Farm Payrolls",
-                      date: "Aug 2",
-                      time: "13:30 BST",
-                      impact: "Market-wide",
-                    },
-                  ].map((event, idx) => (
-                    <div
-                      key={idx}
-                      className="p-3 bg-yellow-50 rounded-lg hover:bg-yellow-100 transition-colors"
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="font-medium text-gray-900">
-                          {event.event}
-                        </span>
+                {refreshing ? (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+                  </div>
+                ) : marketEvents.length > 0 ? (
+                  <div className="space-y-3">
+                    {marketEvents.map((event, idx) => (
+                      <div
+                        key={idx}
+                        className="p-3 bg-yellow-50 rounded-lg hover:bg-yellow-100 transition-colors"
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-medium text-gray-900">
+                            {event.event}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-gray-600">
+                            {event.date} • {event.time}
+                          </span>
+                          <span className="px-2 py-1 bg-yellow-200 text-yellow-800 rounded-full text-xs">
+                            {event.impact}
+                          </span>
+                        </div>
+                        {event.description && (
+                          <p className="text-xs text-gray-600 mt-2">
+                            {event.description}
+                          </p>
+                        )}
                       </div>
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-gray-600">
-                          {event.date} • {event.time}
-                        </span>
-                        <span className="px-2 py-1 bg-yellow-200 text-yellow-800 rounded-full text-xs">
-                          {event.impact}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-4">
+                    <p className="text-sm text-gray-500">
+                      No scheduled market events
+                    </p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Economic calendar will update automatically
+                    </p>
+                  </div>
+                )}
               </div>
-
               {/* Trading Schedule */}
               <div className="p-4">
                 <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center">
                   <Clock className="h-4 w-4 mr-1" />
-                  Today's Schedule (BST)
+                  Today's Schedule (ET)
                 </h4>
                 <div className="space-y-2">
                   {[
                     {
                       label: "US Pre-Market",
-                      time: "09:00 - 14:30",
-                      status: "closed",
+                      time: "04:00 - 09:30 ET",
+                      status: getMarketStatus("premarket"),
                     },
                     {
                       label: "US Main Session",
-                      time: "14:30 - 21:00",
-                      status: "open",
+                      time: "09:30 - 16:00 ET",
+                      status: getMarketStatus("regular"),
                     },
                     {
                       label: "US After Hours",
-                      time: "21:00 - 01:00",
-                      status: "upcoming",
+                      time: "16:00 - 20:00 ET",
+                      status: getMarketStatus("afterhours"),
                     },
                   ].map((session, idx) => (
                     <div
                       key={idx}
-                      className="flex items-center justify-between p-2 rounded"
+                      className="flex items-center justify-between p-2 rounded hover:bg-gray-50"
                     >
                       <div>
                         <span className="text-sm font-medium text-gray-900">
@@ -1150,12 +1873,237 @@ const CatalystAnalysisTab = ({
                   ))}
                 </div>
               </div>
+
+              {/* Most Active Sectors */}
+              <div className="p-4">
+                <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center">
+                  <Activity className="h-4 w-4 mr-1" />
+                  Most Active Sectors
+                </h4>
+                {summaryStats.topSectors.length > 0 ? (
+                  <div className="space-y-2">
+                    {summaryStats.topSectors.map((sector, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between"
+                      >
+                        <span className="text-sm text-gray-700 capitalize">
+                          {sector.sector}
+                        </span>
+                        <div className="flex items-center">
+                          <div className="w-24 bg-gray-200 rounded-full h-2 mr-2">
+                            <div
+                              className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                              style={{
+                                width: `${Math.min(
+                                  (sector.count / summaryStats.total) * 100,
+                                  100
+                                )}%`,
+                              }}
+                            />
+                          </div>
+                          <span className="text-xs text-gray-600 w-8 text-right">
+                            {sector.count}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500 text-center py-2">
+                    No sector data available
+                  </p>
+                )}
+              </div>
+
+              {/* Market Regime Indicators */}
+              <div className="p-4 bg-gray-50">
+                <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center">
+                  <Shield className="h-4 w-4 mr-1" />
+                  Market Regime
+                </h4>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-600">Volatility:</span>
+                    <span
+                      className={`font-medium ${
+                        InstitutionalDataService.marketRegime.volatility ===
+                        "high"
+                          ? "text-red-600"
+                          : InstitutionalDataService.marketRegime.volatility ===
+                            "low"
+                          ? "text-green-600"
+                          : "text-yellow-600"
+                      }`}
+                    >
+                      {InstitutionalDataService.marketRegime.volatility.toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-600">Trend:</span>
+                    <span
+                      className={`font-medium flex items-center ${
+                        InstitutionalDataService.marketRegime.trend ===
+                        "bullish"
+                          ? "text-green-600"
+                          : InstitutionalDataService.marketRegime.trend ===
+                            "bearish"
+                          ? "text-red-600"
+                          : "text-gray-600"
+                      }`}
+                    >
+                      {InstitutionalDataService.marketRegime.trend ===
+                      "bullish" ? (
+                        <TrendingUp className="h-3 w-3 mr-1" />
+                      ) : InstitutionalDataService.marketRegime.trend ===
+                        "bearish" ? (
+                        <TrendingDown className="h-3 w-3 mr-1" />
+                      ) : (
+                        <TrendingFlat className="h-3 w-3 mr-1" />
+                      )}
+                      {InstitutionalDataService.marketRegime.trend.toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-600">Breadth:</span>
+                    <span
+                      className={`font-medium ${
+                        InstitutionalDataService.marketRegime.breadth ===
+                        "advancing"
+                          ? "text-green-600"
+                          : InstitutionalDataService.marketRegime.breadth ===
+                            "declining"
+                          ? "text-red-600"
+                          : "text-gray-600"
+                      }`}
+                    >
+                      {InstitutionalDataService.marketRegime.breadth.toUpperCase()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              {/* Quick Stats */}
+              <div className="p-4">
+                <h4 className="text-sm font-semibold text-gray-700 mb-3">
+                  Session Statistics
+                </h4>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="bg-gray-50 p-2 rounded">
+                    <span className="text-gray-600">Avg NISS Score:</span>
+                    <p className="font-bold text-gray-900">
+                      {summaryStats.avgNissScore.toFixed(0)}
+                    </p>
+                  </div>
+                  <div className="bg-gray-50 p-2 rounded">
+                    <span className="text-gray-600">High Confidence:</span>
+                    <p className="font-bold text-gray-900">
+                      {summaryStats.total > 0
+                        ? (
+                            (summaryStats.highConfidence / summaryStats.total) *
+                            100
+                          ).toFixed(0)
+                        : 0}
+                      %
+                    </p>
+                  </div>
+                  <div className="bg-gray-50 p-2 rounded">
+                    <span className="text-gray-600">Breaking News:</span>
+                    <p className="font-bold text-red-600">
+                      {summaryStats.breaking}
+                    </p>
+                  </div>
+                  <div className="bg-gray-50 p-2 rounded">
+                    <span className="text-gray-600">Bull/Bear Ratio:</span>
+                    <p className="font-bold text-gray-900">
+                      {summaryStats.bearish > 0
+                        ? (summaryStats.bullish / summaryStats.bearish).toFixed(
+                            1
+                          )
+                        : summaryStats.bullish > 0
+                        ? "∞"
+                        : "N/A"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Catalyst Type Legend */}
+              <div className="p-4 bg-gray-50">
+                <h4 className="text-sm font-semibold text-gray-700 mb-3">
+                  Catalyst Types
+                </h4>
+                <div className="space-y-1 text-xs">
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 bg-green-500 rounded-full mr-2"></div>
+                    <span className="text-gray-600">
+                      Positive catalysts (BUY signals)
+                    </span>
+                  </div>
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 bg-red-500 rounded-full mr-2"></div>
+                    <span className="text-gray-600">
+                      Negative catalysts (SELL signals)
+                    </span>
+                  </div>
+                  <div className="flex items-center">
+                    <div className="w-3 h-3 bg-gray-500 rounded-full mr-2"></div>
+                    <span className="text-gray-600">Neutral events (HOLD)</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Data Sources Info */}
+              <div className="p-4">
+                <h4 className="text-sm font-semibold text-gray-700 mb-2">
+                  Data Sources
+                </h4>
+                <p className="text-xs text-gray-600">
+                  Real-time data from institutional-grade providers including
+                  Alpha Vantage, Finnhub, and Polygon.io
+                </p>
+                <div className="mt-2 flex items-center text-xs text-gray-500">
+                  <Info className="h-3 w-3 mr-1" />
+                  <span>Updates every 5 minutes</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
     </div>
   );
+};
+
+// Helper function to determine market status
+const getMarketStatus = (session) => {
+  const now = new Date();
+  const nyTime = new Date(
+    now.toLocaleString("en-US", { timeZone: "America/New_York" })
+  );
+  const hours = nyTime.getHours();
+  const minutes = nyTime.getMinutes();
+  const totalMinutes = hours * 60 + minutes;
+  const day = nyTime.getDay();
+
+  // Weekend check
+  if (day === 0 || day === 6) return "closed";
+
+  switch (session) {
+    case "premarket":
+      if (totalMinutes >= 240 && totalMinutes < 570) return "open";
+      if (totalMinutes < 240) return "upcoming";
+      return "closed";
+    case "regular":
+      if (totalMinutes >= 570 && totalMinutes < 960) return "open";
+      if (totalMinutes < 570) return "upcoming";
+      return "closed";
+    case "afterhours":
+      if (totalMinutes >= 960 && totalMinutes < 1200) return "open";
+      if (totalMinutes < 960) return "upcoming";
+      return "closed";
+    default:
+      return "closed";
+  }
 };
 
 export default CatalystAnalysisTab;

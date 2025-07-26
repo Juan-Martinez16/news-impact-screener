@@ -1473,15 +1473,12 @@ const NewsImpactScreener = () => {
         )}
 
         {/* Other tabs content would go here */}
-        {activeTab === "catalysts" && (
-          <CatalystAnalysisTab
-            stockData={stockData}
-            searchQuery={searchQuery}
-            setSearchQuery={setSearchQuery}
-            loading={loading}
-            screeningResults={screeningResults}
-          />
-        )}
+        <CatalystAnalysisTab
+          screeningResults={screeningResults} // ✅ ONLY InstitutionalDataService data
+          filters={filters}
+          sortBy={sortBy}
+          setSortBy={setSortBy}
+        />
 
         {activeTab === "alerts" && (
           <div className="bg-white rounded-lg shadow p-6">
@@ -1531,10 +1528,7 @@ const NewsImpactScreener = () => {
       {/* Detailed Analysis Modal */}
       {renderDetailedAnalysis()}
       {/* ADD THIS: Debug Component */}
-      <CatalystMetricsDebugger
-        stockData={stockData}
-        screeningResults={screeningResults}
-      />
+      <CatalystMetricsDebugger screeningResults={screeningResults} />
     </div>
   );
 };
