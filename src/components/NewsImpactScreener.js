@@ -149,13 +149,25 @@ const NewsImpactScreener = () => {
     }
   };
 
-  // Enhanced data loading with institutional screening
+  // FIXED: Enhanced data loading with institutional screening
   useEffect(() => {
-    loadAllData();
-    const interval = setInterval(loadAllData, refreshInterval);
-    return () => clearInterval(interval);
-  }, [refreshInterval, filters]);
+    // Only load if not currently screening
+    if (!isScreening) {
+      loadAllData();
+    }
+  }, [filters]); // Removed refreshInterval from dependencies to prevent loops
 
+  // FIXED: Separate useEffect for auto-refresh
+  useEffect(() => {
+    if (refreshInterval && refreshInterval > 0) {
+      const interval = setInterval(() => {
+        if (!isScreening) {
+          loadAllData();
+        }
+      }, refreshInterval);
+      return () => clearInterval(interval);
+    }
+  }, [refreshInterval, isScreening]);
   // Market regime monitoring
   useEffect(() => {
     InstitutionalDataService.updateMarketRegime();
@@ -166,51 +178,58 @@ const NewsImpactScreener = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Enhanced data loading with institutional screening
+  // FIXED: Enhanced data loading with institutional screening
   const loadAllData = async () => {
     setLoading(true);
+    setIsScreening(true); // Move this outside the condition
+
     try {
-      if (!isScreening) {
-        setIsScreening(true);
+      console.log("🔍 Loading institutional data...");
 
-        let results;
+      let results;
 
-        // Try backend screening first, fallback to client-side
-        if (backendHealth) {
-          try {
-            // Try to use backend screening if available
-            results = await InstitutionalDataService.screenAllStocks(filters);
-          } catch (error) {
-            console.warn("Backend screening failed, using client-side:", error);
-            results = await InstitutionalDataService.screenAllStocks(filters);
-            setBackendHealth(false);
-          }
-        } else {
+      // Try backend screening first, fallback to client-side
+      if (backendHealth) {
+        try {
+          // Try to use backend screening if available
           results = await InstitutionalDataService.screenAllStocks(filters);
+        } catch (error) {
+          console.warn("Backend screening failed, using client-side:", error);
+          results = await InstitutionalDataService.screenAllStocks(filters);
+          setBackendHealth(false);
         }
-
-        setScreeningResults(results);
-
-        // Convert to legacy format for backward compatibility
-        const data = {};
-        results.forEach((result) => {
-          data[result.symbol] = {
-            ...result,
-            patterns: detectInstitutionalPatterns(result),
-          };
-        });
-
-        setStockData(data);
-        checkForInstitutionalAlerts(results);
-        updatePerformanceTracking(results);
-        setIsScreening(false);
+      } else {
+        results = await InstitutionalDataService.screenAllStocks(filters);
       }
+
+      console.log(
+        `📊 Screening complete: ${results.length} opportunities found`
+      );
+
+      setScreeningResults(results);
+
+      // Convert to legacy format for backward compatibility
+      const data = {};
+      results.forEach((result) => {
+        data[result.symbol] = {
+          ...result,
+          patterns: detectInstitutionalPatterns(result),
+        };
+      });
+
+      setStockData(data);
+      checkForInstitutionalAlerts(results);
+      updatePerformanceTracking(results);
     } catch (error) {
-      console.error("Error loading institutional data:", error);
-      setIsScreening(false);
+      console.error("❌ Error loading institutional data:", error);
       setBackendHealth(false);
+
+      // Set empty results on error to prevent infinite loading
+      setScreeningResults([]);
+      setStockData({});
     } finally {
       setLoading(false);
+      setIsScreening(false);
     }
   };
 
@@ -1473,50 +1492,63 @@ const NewsImpactScreener = () => {
           </div>
         )}
 
-        {/* Other tabs content would go here */}
+        {/* FIXED: Other tabs content */}
         {activeTab === "catalysts" && (
           <CatalystAnalysisTab
             screeningResults={screeningResults}
             filters={filters}
             sortBy={sortBy}
             setSortBy={setSortBy}
+            refreshTrigger={Date.now()} // Add refresh trigger
+            loading={loading} // Pass loading state
           />
         )}
 
         {activeTab === "alerts" && (
           <div className="bg-white rounded-lg shadow p-6">
             <h2 className="text-lg font-semibold mb-4">Institutional Alerts</h2>
-            <div className="space-y-4">
-              {alerts.slice(0, 10).map((alert) => (
-                <div
-                  key={alert.id}
-                  className="border-l-4 border-blue-500 pl-4 py-2"
-                >
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-medium">
-                        {alert.ticker} - {alert.type}
-                      </p>
-                      <p className="text-sm text-gray-600">{alert.message}</p>
-                      <p className="text-xs text-gray-500 mt-1">
-                        {alert.time.toLocaleString()}
-                      </p>
+            {alerts.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                <Bell className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                <p>No alerts at the moment</p>
+                <p className="text-sm">
+                  Alerts will appear here when institutional signals are
+                  detected
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {alerts.slice(0, 10).map((alert) => (
+                  <div
+                    key={alert.id}
+                    className="border-l-4 border-blue-500 pl-4 py-2"
+                  >
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="font-medium">
+                          {alert.ticker} - {alert.type}
+                        </p>
+                        <p className="text-sm text-gray-600">{alert.message}</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {alert.time.toLocaleString()}
+                        </p>
+                      </div>
+                      <span
+                        className={`px-2 py-1 text-xs rounded ${
+                          alert.severity === "high"
+                            ? "bg-red-100 text-red-800"
+                            : alert.severity === "medium"
+                            ? "bg-yellow-100 text-yellow-800"
+                            : "bg-gray-100 text-gray-800"
+                        }`}
+                      >
+                        {alert.severity}
+                      </span>
                     </div>
-                    <span
-                      className={`px-2 py-1 text-xs rounded ${
-                        alert.severity === "high"
-                          ? "bg-red-100 text-red-800"
-                          : alert.severity === "medium"
-                          ? "bg-yellow-100 text-yellow-800"
-                          : "bg-gray-100 text-gray-800"
-                      }`}
-                    >
-                      {alert.severity}
-                    </span>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

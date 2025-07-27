@@ -36,7 +36,7 @@ import InstitutionalDataService from "../api/InstitutionalDataService";
 const CatalystAnalysisTab = ({
   screeningResults = [],
   filters = {},
-  refreshTrigger = 0, // Add this prop to trigger refreshes from parent
+  refreshTrigger = 0,
 }) => {
   // Enhanced state management
   const [catalystView, setCatalystView] = useState("live");
@@ -55,6 +55,39 @@ const CatalystAnalysisTab = ({
   const [upcomingEarnings, setUpcomingEarnings] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(new Date());
+
+  // FIXED: Handle empty or undefined screeningResults
+  const validScreeningResults = useMemo(() => {
+    if (!Array.isArray(screeningResults)) {
+      console.warn(
+        "CatalystAnalysisTab: screeningResults is not an array:",
+        screeningResults
+      );
+      return [];
+    }
+    return screeningResults;
+  }, [screeningResults]);
+
+  // FIXED: Set initial loading state based on data availability
+  useEffect(() => {
+    if (validScreeningResults.length === 0 && !loading) {
+      setLoading(true);
+      // Set a timeout to prevent infinite loading
+      const timeout = setTimeout(() => {
+        setLoading(false);
+        if (validScreeningResults.length === 0) {
+          setError(
+            "No screening data available. Please check the main screener."
+          );
+        }
+      }, 10000); // 10 second timeout
+
+      return () => clearTimeout(timeout);
+    } else if (validScreeningResults.length > 0) {
+      setLoading(false);
+      setError(null);
+    }
+  }, [validScreeningResults, loading]);
 
   // Enhanced catalyst categorization based on real patterns
   const categorizeNewsEvent = useCallback((newsItem) => {
@@ -521,13 +554,17 @@ const CatalystAnalysisTab = ({
 
     return "Mid-Range";
   }, []);
-  // Enhanced catalyst data processing with real API data
+  // FIXED: Enhanced catalyst data processing with proper validation
   const processedCatalysts = useMemo(() => {
     const catalysts = [];
 
-    // Process screening results from InstitutionalDataService
-    if (screeningResults && screeningResults.length > 0) {
-      screeningResults.forEach((stock) => {
+    // FIXED: Use validScreeningResults instead of screeningResults
+    if (validScreeningResults && validScreeningResults.length > 0) {
+      console.log(
+        `🔍 Processing ${validScreeningResults.length} screening results for catalysts`
+      );
+
+      validScreeningResults.forEach((stock) => {
         const {
           symbol,
           nissScore = 0,
@@ -646,7 +683,15 @@ const CatalystAnalysisTab = ({
           });
         }
       });
+    } else {
+      console.log(
+        "⚠️ No valid screening results available for catalyst processing"
+      );
     }
+
+    console.log(
+      `📊 Processed ${catalysts.length} catalysts from screening data`
+    );
 
     // Sort by recency and relevance
     return catalysts.sort((a, b) => {
@@ -658,7 +703,7 @@ const CatalystAnalysisTab = ({
       return b.publishedAt - a.publishedAt;
     });
   }, [
-    screeningResults,
+    validScreeningResults, // FIXED: Use validScreeningResults
     categorizeNewsEvent,
     calculateExpectedImpact,
     calculateProbability,
