@@ -11,10 +11,7 @@ app.use(
   cors({
     origin: [
       "http://localhost:3000",
-      "https://your-frontend-domain.vercel.app", // Replace with your actual frontend URL
-      /\.vercel\.app$/,
-      /\.netlify\.app$/,
-      /\.render\.com$/,
+      "https://news-impact-screener.vercel.app", // Replace with your actual frontend URL
     ],
     credentials: true,
   })
