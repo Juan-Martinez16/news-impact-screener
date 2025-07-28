@@ -181,52 +181,63 @@ const NewsImpactScreener = () => {
   // FIXED: Enhanced data loading with institutional screening
   const loadAllData = async () => {
     setLoading(true);
-    setIsScreening(true); // Move this outside the condition
+    setIsScreening(true);
 
     try {
       console.log("🔍 Loading institutional data...");
 
-      let results;
-
-      // Try backend screening first, fallback to client-side
-      if (backendHealth) {
-        try {
-          // Try to use backend screening if available
-          results = await InstitutionalDataService.screenAllStocks(filters);
-        } catch (error) {
-          console.warn("Backend screening failed, using client-side:", error);
-          results = await InstitutionalDataService.screenAllStocks(filters);
-          setBackendHealth(false);
-        }
-      } else {
-        results = await InstitutionalDataService.screenAllStocks(filters);
-      }
+      // Always use InstitutionalDataService.screenAllStocks (it has the rate limiting built-in)
+      const results = await InstitutionalDataService.screenAllStocks(filters);
 
       console.log(
-        `📊 Screening complete: ${results.length} opportunities found`
+        `📊 Screening complete: ${
+          results ? results.length : 0
+        } opportunities found`
+      );
+      console.log(
+        "📊 Sample result:",
+        results && results.length > 0 ? results[0] : "No results"
       );
 
-      setScreeningResults(results);
+      // FIXED: Ensure results is always an array
+      const validResults = Array.isArray(results) ? results : [];
+      setScreeningResults(validResults);
 
       // Convert to legacy format for backward compatibility
       const data = {};
-      results.forEach((result) => {
-        data[result.symbol] = {
-          ...result,
-          patterns: detectInstitutionalPatterns(result),
-        };
+      validResults.forEach((result) => {
+        if (result && result.symbol) {
+          data[result.symbol] = {
+            ...result,
+            patterns: detectInstitutionalPatterns(result),
+          };
+        }
       });
 
       setStockData(data);
-      checkForInstitutionalAlerts(results);
-      updatePerformanceTracking(results);
+
+      // Only run these if we have valid results
+      if (validResults.length > 0) {
+        checkForInstitutionalAlerts(validResults);
+        updatePerformanceTracking(validResults);
+      }
+
+      // Update backend health based on success
+      setBackendHealth(true);
     } catch (error) {
       console.error("❌ Error loading institutional data:", error);
+
+      // Set backend health to false but don't fail completely
       setBackendHealth(false);
 
-      // Set empty results on error to prevent infinite loading
+      // Set empty results to prevent crashes
       setScreeningResults([]);
       setStockData({});
+
+      // Show user-friendly error message
+      alert(
+        "Unable to load market data. Please check your connection and try again."
+      );
     } finally {
       setLoading(false);
       setIsScreening(false);

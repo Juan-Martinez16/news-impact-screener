@@ -28,6 +28,135 @@ class InstitutionalDataService {
 
     // Universe of stocks to screen (expanded for full market coverage)
     this.screeningUniverse = this.buildScreeningUniverse();
+
+    // ADD THESE NEW LINES HERE:
+    // Request queue system for rate limiting
+    this.requestQueue = [];
+    this.isProcessingQueue = false;
+    this.maxConcurrentRequests = 3; // Only 3 requests at once
+    this.requestDelay = 500; // Wait 500ms between requests
+
+    // Rate limiting tracking
+    this.lastRequestTime = 0;
+    this.requestCount = 0;
+    this.requestWindow = 60000; // 1 minute window
+    this.maxRequestsPerWindow = 80; // Max 80 requests per minute
+
+    // Error tracking
+    this.consecutiveFailures = 0;
+    this.maxFailures = 5;
+    this.circuitBreakerTimeout = 30000; // 30 seconds
+  }
+
+  // ADD THIS ENTIRE METHOD - It manages the request queue
+  async makeRateLimitedRequest(requestFn, cacheKey = null) {
+    // Check if we already have this data in cache
+    if (cacheKey && this.cache.has(cacheKey)) {
+      const cached = this.cache.get(cacheKey);
+      if (Date.now() - cached.timestamp < this.cacheTTL) {
+        console.log(`📋 Using cached data for ${cacheKey}`);
+        return cached.data;
+      }
+    }
+
+    // Add request to queue and wait for it to be processed
+    return new Promise((resolve, reject) => {
+      this.requestQueue.push({ requestFn, cacheKey, resolve, reject });
+      this.processQueue(); // Start processing if not already running
+    });
+  }
+
+  // ADD THIS ENTIRE METHOD - It processes requests one by one
+  async processQueue() {
+    // Don't start if already processing or no requests
+    if (this.isProcessingQueue || this.requestQueue.length === 0) {
+      return;
+    }
+
+    console.log(
+      `🔄 Starting to process ${this.requestQueue.length} queued requests`
+    );
+    this.isProcessingQueue = true;
+
+    while (this.requestQueue.length > 0) {
+      const now = Date.now();
+
+      // Check if we need to reset our rate limit counter
+      if (now - this.lastRequestTime > this.requestWindow) {
+        console.log(
+          `🔄 Rate limit window reset, processed ${this.requestCount} requests`
+        );
+        this.requestCount = 0;
+        this.lastRequestTime = now;
+      }
+
+      // If we've hit our rate limit, wait
+      if (this.requestCount >= this.maxRequestsPerWindow) {
+        const waitTime = this.requestWindow - (now - this.lastRequestTime);
+        console.log(
+          `⏳ Rate limit reached! Waiting ${Math.round(
+            waitTime / 1000
+          )} seconds...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, waitTime));
+        this.requestCount = 0;
+        this.lastRequestTime = Date.now();
+      }
+
+      // Get the next request from queue
+      const { requestFn, cacheKey, resolve, reject } =
+        this.requestQueue.shift();
+
+      try {
+        console.log(
+          `📡 Making API request (${this.requestCount + 1}/${
+            this.maxRequestsPerWindow
+          })...`
+        );
+
+        // Make the actual API call
+        const result = await requestFn();
+
+        // Save result to cache if we have a cache key
+        if (cacheKey) {
+          this.cache.set(cacheKey, { data: result, timestamp: Date.now() });
+          console.log(`💾 Cached result for ${cacheKey}`);
+        }
+
+        // Update counters
+        this.requestCount++;
+        this.consecutiveFailures = 0; // Reset failure count on success
+
+        // Return the result
+        resolve(result);
+      } catch (error) {
+        this.consecutiveFailures++;
+        console.error(
+          `❌ Request failed (${this.consecutiveFailures} consecutive failures):`,
+          error.message
+        );
+
+        // If it's a rate limit error, wait longer
+        if (
+          error.message.includes("429") ||
+          error.message.includes("rate limit")
+        ) {
+          console.log("🚫 Hit rate limit, waiting before next request...");
+          const backoffTime = Math.min(2000 * this.consecutiveFailures, 10000); // 2-10 seconds
+          await new Promise((resolve) => setTimeout(resolve, backoffTime));
+        }
+
+        // Return the error
+        reject(error);
+      }
+
+      // Always wait between requests to be polite to the API
+      console.log(`⏸️ Waiting ${this.requestDelay}ms before next request...`);
+      await new Promise((resolve) => setTimeout(resolve, this.requestDelay));
+    }
+
+    console.log("✅ Finished processing all queued requests");
+    this.isProcessingQueue = false;
   }
 
   // Add checkBackendHealth method at the beginning of the class
@@ -310,50 +439,52 @@ class InstitutionalDataService {
   }
 
   // Enhanced quote fetching with backend integration (no direct API key usage)
+  // REPLACE YOUR ENTIRE getQuote METHOD WITH THIS:
   async getQuote(symbol) {
-    const cacheKey = `quote_${symbol}`;
-    const cached = this.getCached(cacheKey);
-    if (cached) return cached;
-
     try {
-      // Try backend first if available
-      if (this.backendHealth) {
-        try {
-          const data = await makeBackendApiCall(
-            API_CONFIG.backend.endpoints.quote(symbol)
-          );
+      console.log(`📊 Getting quote for ${symbol}...`);
 
-          if (data && data.success) {
-            const quote = {
-              symbol: symbol,
-              price: data.data.price,
-              changePercent: data.data.changePercent,
-              volume: data.data.volume || 0,
-              high: data.data.high,
-              low: data.data.low,
-              open: data.data.open,
-              previousClose: data.data.previousClose,
-              timestamp: new Date(),
-              avgVolume: data.data.avgVolume,
-              high52Week: data.data.high52Week,
-              low52Week: data.data.low52Week,
-            };
+      // Use our new rate-limited request system
+      const result = await this.makeRateLimitedRequest(async () => {
+        return await makeBackendApiCall(`/api/quote/${symbol}`);
+      }, `quote_${symbol}`);
 
-            this.setCache(cacheKey, quote);
-            return quote;
-          }
-        } catch (error) {
-          console.warn("Backend quote failed, using fallback data:", error);
-          this.backendHealth = false;
-        }
+      // Check if we got a successful response from backend
+      if (result && result.success && result.data) {
+        console.log(`✅ Got quote for ${symbol}: $${result.data.price}`);
+        return {
+          symbol: symbol,
+          price: result.data.price,
+          changePercent: result.data.changePercent,
+          volume: result.data.volume || 0,
+          high: result.data.high,
+          low: result.data.low,
+          open: result.data.open,
+          previousClose: result.data.previousClose,
+          timestamp: new Date(),
+          avgVolume: result.data.avgVolume,
+          high52Week: result.data.high52Week,
+          low52Week: result.data.low52Week,
+          marketCap: result.data.marketCap,
+          sector: result.data.sector,
+        };
       }
 
-      // Fallback to mock data when backend is unavailable
-      const mockQuote = this.generateMockQuote(symbol);
-      this.setCache(cacheKey, mockQuote);
-      return mockQuote;
+      // If backend response format is different, try to use it directly
+      if (result && result.price) {
+        console.log(`✅ Got direct quote for ${symbol}: $${result.price}`);
+        return result;
+      }
+
+      // If no good data, throw error to trigger fallback
+      throw new Error("No valid quote data received");
     } catch (error) {
-      console.error(`Error fetching quote for ${symbol}:`, error);
+      console.warn(
+        `⚠️ Backend quote failed for ${symbol}, using fallback data:`,
+        error.message
+      );
+
+      // Return mock data instead of failing completely
       return this.generateMockQuote(symbol);
     }
   }
@@ -985,68 +1116,186 @@ class InstitutionalDataService {
   }
 
   // Screen all stocks
+  // REPLACE YOUR ENTIRE screenAllStocks METHOD WITH THIS:
   async screenAllStocks(filters = {}) {
+    console.log(
+      "🔍 Starting institutional stock screening with enhanced rate limiting..."
+    );
+
     const results = [];
     const allSymbols = Object.values(this.screeningUniverse).flat();
 
-    // Process in batches
-    const batchSize = 10;
-    const maxBatches = 10; // Limit for performance
+    // VERY conservative approach - only 10 stocks maximum
+    const maxSymbols = 10;
+    const symbolsToProcess = allSymbols.slice(0, maxSymbols);
 
-    for (
-      let i = 0;
-      i < Math.min(allSymbols.length, batchSize * maxBatches);
-      i += batchSize
-    ) {
-      const batch = allSymbols.slice(i, i + batchSize);
-      const promises = batch.map((symbol) => this.analyzeStock(symbol));
+    console.log(
+      `📊 Will analyze ${symbolsToProcess.length} stocks (rate-limited)`
+    );
+
+    // Process stocks ONE BY ONE with delays
+    for (let i = 0; i < symbolsToProcess.length; i++) {
+      const symbol = symbolsToProcess[i];
 
       try {
-        const batchResults = await Promise.all(promises);
-        results.push(...batchResults.filter((r) => r !== null));
+        console.log(
+          `🔍 [${i + 1}/${symbolsToProcess.length}] Analyzing ${symbol}...`
+        );
+
+        const stockResult = await this.analyzeStock(symbol);
+
+        if (stockResult && stockResult.quote && stockResult.quote.price > 0) {
+          results.push(stockResult);
+          console.log(
+            `✅ Added ${symbol} (NISS: ${stockResult.nissScore.toFixed(0)})`
+          );
+        } else {
+          console.log(`⚠️ Skipped ${symbol} - invalid data`);
+        }
       } catch (error) {
-        console.error("Batch processing error:", error);
+        console.warn(`❌ Failed to analyze ${symbol}:`, error.message);
+
+        // Don't let one failure stop the whole process
+        continue;
       }
 
-      // Rate limit delay
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Show progress
+      if ((i + 1) % 3 === 0 || i === symbolsToProcess.length - 1) {
+        console.log(
+          `📊 Progress: ${i + 1}/${symbolsToProcess.length} completed, ${
+            results.length
+          } valid results`
+        );
+      }
+
+      // Wait 2 seconds between each stock (very conservative)
+      if (i < symbolsToProcess.length - 1) {
+        console.log(`⏸️ Waiting 2 seconds before next analysis...`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
     }
 
-    // Apply filters and sort
-    return results
+    // Filter and sort results
+    const filteredResults = results
       .filter((stock) => this.applyScreeningFilters(stock, filters))
       .sort((a, b) => Math.abs(b.nissScore) - Math.abs(a.nissScore))
-      .slice(0, 50); // Top 50 opportunities
+      .slice(0, 20);
+
+    console.log(
+      `✅ Screening complete! Found ${filteredResults.length} institutional opportunities`
+    );
+    console.log(
+      "📊 Top 3 opportunities:",
+      filteredResults
+        .slice(0, 3)
+        .map((r) => `${r.symbol} (${r.nissScore.toFixed(0)})`)
+    );
+
+    return filteredResults;
+  }
+
+  // ADD THIS NEW METHOD - Creates fake data when APIs fail
+  generateMockQuote(symbol) {
+    console.log(`🎭 Generating mock data for ${symbol}`);
+
+    // Create realistic-looking fake data
+    const basePrice = 50 + Math.random() * 200; // Price between $50-$250
+    const changePercent = (Math.random() - 0.5) * 8; // Change between -4% and +4%
+    const change = (basePrice * changePercent) / 100;
+
+    return {
+      symbol: symbol,
+      price: Number(basePrice.toFixed(2)),
+      change: Number(change.toFixed(2)),
+      changePercent: Number(changePercent.toFixed(2)),
+      volume: Math.floor(Math.random() * 5000000) + 500000, // Random volume
+      high: Number((basePrice * 1.03).toFixed(2)),
+      low: Number((basePrice * 0.97).toFixed(2)),
+      open: Number((basePrice * (1 + (Math.random() - 0.5) * 0.02)).toFixed(2)),
+      previousClose: Number((basePrice - change).toFixed(2)),
+      timestamp: new Date(),
+      avgVolume: Math.floor(Math.random() * 3000000) + 750000,
+      high52Week: Number((basePrice * (1 + Math.random() * 0.6)).toFixed(2)),
+      low52Week: Number((basePrice * (1 - Math.random() * 0.4)).toFixed(2)),
+      marketCap: basePrice * 1000000000, // Fake market cap
+      sector: this.getSectorForSymbol(symbol),
+      isFallback: true, // Flag to show this is fake data
+    };
   }
 
   // Analyze individual stock
   async analyzeStock(symbol) {
     try {
-      const [quote, news, technicals, options] = await Promise.all([
-        this.getQuote(symbol),
-        this.getNews(symbol),
-        this.getTechnicals(symbol),
-        this.getOptionsData(symbol),
-      ]);
+      console.log(`🔍 Analyzing ${symbol}...`);
 
-      if (!quote || quote.price === 0) return null;
+      // Get data sequentially to avoid overwhelming the rate limiter
+      const quote = await this.getQuote(symbol);
+
+      // If quote fails or is invalid, skip this stock
+      if (!quote || !quote.price || quote.price === 0) {
+        console.log(`⚠️ Skipping ${symbol} - no valid quote data`);
+        return null;
+      }
+
+      console.log(`✅ Got quote for ${symbol}: $${quote.price}`);
+
+      // Get news with fallback
+      let news = [];
+      try {
+        news = await this.getNews(symbol);
+        console.log(
+          `📰 Got ${news ? news.length : 0} news items for ${symbol}`
+        );
+      } catch (error) {
+        console.warn(`⚠️ News failed for ${symbol}:`, error.message);
+        news = this.generateMockNews(symbol);
+      }
+
+      // Get technicals with fallback
+      let technicals = {};
+      try {
+        technicals = await this.getTechnicals(symbol);
+      } catch (error) {
+        console.warn(`⚠️ Technicals failed for ${symbol}:`, error.message);
+        technicals = this.generateMockTechnicals(quote);
+      }
+
+      // Get options with fallback
+      let options = {};
+      try {
+        options = await this.getOptionsData(symbol);
+      } catch (error) {
+        console.warn(`⚠️ Options failed for ${symbol}:`, error.message);
+        options = this.generateMockOptions();
+      }
 
       const stockData = { symbol, quote, news, technicals, options };
       const nissData = await this.calculateEnhancedNISS(stockData);
       const tradeSetup = this.calculateTradeSetup(stockData, nissData);
 
-      return {
+      const result = {
         symbol,
-        ...stockData,
+        quote,
+        news,
+        technicals,
+        options,
         nissScore: nissData.score,
         nissData: nissData,
         tradeSetup: tradeSetup,
         sector: this.getSectorForSymbol(symbol),
         marketCap: await this.getMarketCap(symbol),
         company: this.getCompanyName(symbol),
+        timestamp: new Date(),
       };
+
+      console.log(
+        `✅ Analysis complete for ${symbol} - NISS: ${nissData.score.toFixed(
+          0
+        )}, Signal: ${tradeSetup?.action || "HOLD"}`
+      );
+      return result;
     } catch (error) {
-      console.error(`Error analyzing ${symbol}:`, error);
+      console.error(`❌ Error analyzing ${symbol}:`, error);
       return null;
     }
   }

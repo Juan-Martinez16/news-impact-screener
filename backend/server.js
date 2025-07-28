@@ -268,6 +268,32 @@ function getSectorForSymbol(symbol) {
   return "other";
 }
 
+// Add this BEFORE your existing rate limiting helper
+const RATE_LIMITS = {
+  quote: { maxPerMinute: 200, maxConcurrent: 20 }, // Increased limits
+  news: { maxPerMinute: 100, maxConcurrent: 10 },
+  batch: { maxPerMinute: 50, maxConcurrent: 5 },
+};
+
+// Request queue system
+const requestQueues = {
+  quote: [],
+  news: [],
+  batch: [],
+};
+
+const activeRequests = {
+  quote: 0,
+  news: 0,
+  batch: 0,
+};
+
+// Enhanced caching
+const quoteCache = new Map();
+const newsCache = new Map();
+const CACHE_TTL = 30000; // 30 seconds for quotes
+const NEWS_CACHE_TTL = 300000; // 5 minutes for news
+
 // Rate limiting helper
 const rateLimiter = new Map();
 const RATE_LIMIT_PER_MINUTE = 50;
