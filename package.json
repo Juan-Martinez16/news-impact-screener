@@ -1,7 +1,9 @@
 {
   "name": "news-impact-screener",
-  "version": "0.1.0",
+  "version": "2.1.0",
   "private": true,
+  "description": "Institutional-grade news impact screening and trading signal analysis",
+  "homepage": "https://news-impact-screener.vercel.app",
   "dependencies": {
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
@@ -22,7 +24,17 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "start:backend": "cd backend && npm start",
+    "start:backend:dev": "cd backend && npm run dev",
+    "build:backend": "cd backend && npm install --production",
+    "dev": "concurrently \"npm run start:backend:dev\" \"npm start\"",
+    "build:full": "npm run build && npm run build:backend",
+    "serve:local": "serve -s build -l 3000",
+    "test:integration": "npm test -- --testPathPattern=integration",
+    "analyze": "npm run build && npx source-map-explorer 'build/static/js/*.js'",
+    "health-check": "curl -f http://localhost:3001/health || exit 1",
+    "deploy:check": "npm run build && npm run health-check"
   },
   "eslintConfig": {
     "extends": [
@@ -45,6 +57,13 @@
   "devDependencies": {
     "autoprefixer": "^10.4.21",
     "postcss": "^8.5.6",
-    "tailwindcss": "^3.4.17"
+    "tailwindcss": "^3.4.17",
+    "concurrently": "^8.2.2",
+    "source-map-explorer": "^2.5.3"
+  },
+  "proxy": "http://localhost:3001",
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
   }
 }

@@ -1,0 +1,33 @@
+# render.yaml - Render.com Deployment Configuration
+services:
+  - type: web
+    name: news-impact-screener-backend
+    env: node
+    plan: starter # or standard for production
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: FINNHUB_KEY
+        sync: false # Set in Render dashboard
+      - key: ALPHA_VANTAGE_KEY
+        sync: false # Set in Render dashboard  
+      - key: POLYGON_KEY
+        sync: false # Set in Render dashboard
+      - key: RAPIDAPI_KEY
+        sync: false # Set in Render dashboard
+    autoDeploy: true
+    region: oregon # or your preferred region
+    disk:
+      name: data
+      size: 1GB
+      mountPath: /opt/render/project/data
+    scaling:
+      minInstances: 1
+      maxInstances: 3
+      targetMemoryPercent: 70
+      targetCPUPercent: 70

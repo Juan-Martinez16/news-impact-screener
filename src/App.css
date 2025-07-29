@@ -18,11 +18,12 @@
 }
 
 @keyframes pulse {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
   }
   50% {
-    opacity: .5;
+    opacity: 0.5;
   }
 }
 
@@ -33,7 +34,7 @@
   --jm-primary-sky: #60a5fa;
   --jm-gradient-primary: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
   --jm-gradient-hover: linear-gradient(135deg, #1a3a9f 0%, #3575e0 100%);
-  
+
   /* Override default blue colors with JM brand colors */
   --color-primary: #1e40af;
   --color-primary-hover: #1a3a9f;
@@ -98,6 +99,7 @@ a:hover {
 .high-niss-score {
   background: var(--jm-gradient-primary);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
   font-weight: bold;
 }
