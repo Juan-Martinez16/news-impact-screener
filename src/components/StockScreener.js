@@ -25,18 +25,24 @@ import {
 } from "lucide-react";
 import InstitutionalDataService from "../api/InstitutionalDataService";
 
-const StockScreener = () => {
-  // Enhanced state management
-  const [stocks, setStocks] = useState({});
-  const [screeningResults, setScreeningResults] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [isScreening, setIsScreening] = useState(false);
-  const [currentTime, setCurrentTime] = useState(new Date());
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedStock, setSelectedStock] = useState(null);
-  const [backendHealth, setBackendHealth] = useState(true);
-  const [lastUpdate, setLastUpdate] = useState(new Date());
-
+const StockScreener = ({
+  stocks = [], // Enhanced: from NewsImpactScreener
+  loading = false, // Enhanced: loading state
+  searchQuery = "", // Enhanced: search functionality
+  setSearchQuery, // Enhanced: search handler
+  filters = {}, // Enhanced: filter state
+  setFilters, // Enhanced: filter handler
+  sortBy = "nissScore", // Enhanced: sort state
+  setSortBy, // Enhanced: sort handler
+  sortDirection = "desc", // Enhanced: sort direction
+  setSortDirection, // Enhanced: sort direction handler
+  selectedStock, // Enhanced: selected stock state
+  setSelectedStock, // Enhanced: selection handler
+  onRefresh, // Enhanced: refresh handler
+  marketRegime = {}, // Enhanced: market context
+  backendHealth = true, // Enhanced: backend status
+  serviceStatus = {}, // Enhanced: service metrics
+}) => {
   // Enhanced filters for institutional screening
   const [filters, setFilters] = useState({
     marketCap: "all", // all, mega, large, mid, small
@@ -49,6 +55,101 @@ const StockScreener = () => {
     signalType: "all", // all, BUY, SELL, HOLD
     showOnlyWithNews: false, // Filter stocks with news only
   });
+
+  // ADD THIS ENHANCED HEADER SECTION (insert after your existing filters)
+  const renderEnhancedHeader = () => (
+    <div className="bg-white rounded-lg shadow p-6 mb-6">
+      <div className="flex justify-between items-start mb-4">
+        <div>
+          <h2 className="text-xl font-semibold text-gray-900">
+            Institutional Stock Screener
+          </h2>
+          <p className="text-sm text-gray-600 mt-1">
+            Real-time screening of {serviceStatus.totalSymbols || "400+"}{" "}
+            symbols across {serviceStatus.sectors || 12} sectors
+          </p>
+        </div>
+
+        {/* Enhanced Status Indicators */}
+        <div className="flex items-center space-x-4">
+          <div className="text-right">
+            <div className="text-sm text-gray-500">Backend Status</div>
+            <div
+              className={`flex items-center text-sm font-medium ${
+                backendHealth ? "text-green-600" : "text-red-600"
+              }`}
+            >
+              <div
+                className={`w-2 h-2 rounded-full mr-2 ${
+                  backendHealth ? "bg-green-500" : "bg-red-500"
+                }`}
+              />
+              {backendHealth ? "Connected" : "Offline"}
+            </div>
+          </div>
+
+          <div className="text-right">
+            <div className="text-sm text-gray-500">Market Regime</div>
+            <div className="text-sm font-medium text-gray-700">
+              {marketRegime.trend || "Neutral"} •{" "}
+              {marketRegime.volatility || "Normal"}
+            </div>
+          </div>
+
+          {onRefresh && (
+            <button
+              onClick={onRefresh}
+              disabled={loading}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center"
+            >
+              <RefreshCw
+                className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+              />
+              {loading ? "Screening..." : "Refresh"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Enhanced Summary Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="text-center p-3 bg-blue-50 rounded-lg">
+          <div className="text-2xl font-bold text-blue-600">
+            {stocks.length}
+          </div>
+          <div className="text-sm text-gray-600">Total Results</div>
+        </div>
+        <div className="text-center p-3 bg-green-50 rounded-lg">
+          <div className="text-2xl font-bold text-green-600">
+            {stocks.filter((s) => (s.nissScore || 0) > 0).length}
+          </div>
+          <div className="text-sm text-gray-600">Bullish Signals</div>
+        </div>
+        <div className="text-center p-3 bg-red-50 rounded-lg">
+          <div className="text-2xl font-bold text-red-600">
+            {stocks.filter((s) => (s.nissScore || 0) < 0).length}
+          </div>
+          <div className="text-sm text-gray-600">Bearish Signals</div>
+        </div>
+        <div className="text-center p-3 bg-purple-50 rounded-lg">
+          <div className="text-2xl font-bold text-purple-600">
+            {stocks.filter((s) => s.nissData?.confidence === "HIGH").length}
+          </div>
+          <div className="text-sm text-gray-600">High Confidence</div>
+        </div>
+        <div className="text-center p-3 bg-orange-50 rounded-lg">
+          <div className="text-2xl font-bold text-orange-600">
+            {
+              stocks.filter(
+                (s) => s.tradeSetup?.action && s.tradeSetup.action !== "HOLD"
+              ).length
+            }
+          </div>
+          <div className="text-sm text-gray-600">Active Signals</div>
+        </div>
+      </div>
+    </div>
+  );
 
   // Sorting options
   const [sortBy, setSortBy] = useState("nissScore");
@@ -567,7 +668,6 @@ const StockScreener = () => {
           </div>
         </div>
       </div>
-
       {/* Enhanced Filters */}
       <div className="bg-white border-b">
         <div className="max-w-7xl mx-auto px-4 py-4">
@@ -726,7 +826,40 @@ const StockScreener = () => {
           </div>
         </div>
       </div>
+      // ADD THIS ENHANCED DATA SOURCE INDICATOR (insert before your table)
+      const renderDataSourceIndicator = () (
+      <div className="bg-white rounded-lg shadow p-4 mb-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <div className="flex items-center text-sm text-gray-600">
+              <Activity className="h-4 w-4 mr-2" />
+              Data Sources:
+            </div>
+            <div className="flex items-center space-x-3">
+              {backendHealth ? (
+                <>
+                  <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
+                    Live API Data
+                  </span>
+                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                    Finnhub • Alpha Vantage
+                  </span>
+                </>
+              ) : (
+                <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded">
+                  Cached/Fallback Data
+                </span>
+              )}
+            </div>
+          </div>
 
+          <div className="text-xs text-gray-500">
+            Cache: {serviceStatus.cacheSize || 0} items • Rate limit:{" "}
+            {serviceStatus.rateLimitRemaining || "N/A"} remaining
+          </div>
+        </div>
+      </div>
+      );
       {/* Results Table */}
       <div className="max-w-7xl mx-auto px-4 py-6">
         <div className="bg-white rounded-lg shadow">
@@ -1013,7 +1146,6 @@ const StockScreener = () => {
           )}
         </div>
       </div>
-
       {/* Stock Detail Modal */}
       {selectedStock && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">

@@ -1,7 +1,7 @@
-// src/api/config.js
-// Enhanced configuration with backend integration and rate limiting
+// src/api/config.js - ENHANCED VERSION
+// Enhanced configuration building on your existing structure
 
-// Helper functions
+// Helper functions for date calculations
 const getToday = () => new Date().toISOString().split("T")[0];
 const getLastWeek = () => {
   const date = new Date();
@@ -9,12 +9,16 @@ const getLastWeek = () => {
   return date.toISOString().split("T")[0];
 };
 
+// Enhanced API configuration
 export const API_CONFIG = {
-  // Backend Configuration (PRIMARY) - Using Render deployment
+  // Backend Configuration (PRIMARY) - Your existing setup enhanced
   backend: {
     baseUrl:
       process.env.REACT_APP_BACKEND_URL ||
-      "https://news-impact-screener-backend.onrender.com",
+      (process.env.NODE_ENV === "development"
+        ? "http://localhost:3001"
+        : "https://news-impact-screener-backend.onrender.com"),
+    timeout: 15000, // 15 seconds for institutional data
     endpoints: {
       health: () => "/health",
       quote: (symbol) => `/api/quote/${symbol}`,
@@ -23,278 +27,298 @@ export const API_CONFIG = {
       options: (symbol) => `/api/options/${symbol}`,
       batchQuotes: () => "/api/batch/quotes",
       screening: () => "/api/screening",
+      universe: () => "/api/universe",
     },
   },
 
-  // Direct API Configuration (FALLBACK ONLY - backend handles keys)
-  alphaVantage: {
-    key: null, // Backend handles this
-    baseUrl: "https://www.alphavantage.co/query",
-    endpoints: {
-      quote: (symbol) => `function=GLOBAL_QUOTE&symbol=${symbol}`,
-      indicators: (symbol) =>
-        `function=RSI&symbol=${symbol}&interval=daily&time_period=14&series_type=close`,
-    },
+  // Rate limiting configuration (matches backend)
+  rateLimiting: {
+    maxRequestsPerMinute: 80,
+    backoffMultiplier: 2,
+    maxBackoffTime: 30000, // 30 seconds
+    retryAttempts: 3,
   },
 
-  finnhub: {
-    key: null, // Backend handles this
-    baseUrl: "https://finnhub.io/api/v1",
-    endpoints: {
-      quote: (symbol) => `/quote?symbol=${symbol}`,
-      news: (symbol) =>
-        `/company-news?symbol=${symbol}&from=${getLastWeek()}&to=${getToday()}`,
-    },
+  // Caching configuration
+  cache: {
+    quoteTTL: 30000, // 30 seconds for quotes
+    newsTTL: 300000, // 5 minutes for news
+    technicalsTTL: 600000, // 10 minutes for technicals
+    universeTTL: 3600000, // 1 hour for universe data
   },
 
-  polygon: {
-    key: null, // Backend handles this
-    baseUrl: "https://api.polygon.io/v2",
-    endpoints: {
-      quote: (symbol) => `/aggs/ticker/${symbol}/prev`,
-      news: (symbol) => `/reference/news?ticker=${symbol}&limit=10`,
-    },
-  },
-
-  yahooFinance: {
-    headers: {
-      "x-rapidapi-host": "apidojo-yahoo-finance-v1.p.rapidapi.com",
-      "x-rapidapi-key": null, // Backend handles this
-    },
-    baseUrl: "https://apidojo-yahoo-finance-v1.p.rapidapi.com",
-    endpoints: {
-      quote: (symbol) => `/stock/v3/get-summary?symbol=${symbol}&region=US`,
-    },
+  // Circuit breaker configuration
+  circuitBreaker: {
+    failureThreshold: 5,
+    timeoutThreshold: 30000, // 30 seconds
+    resetTimeout: 300000, // 5 minutes
   },
 };
 
-// Rate limiting configuration
-export const RATE_LIMIT_CONFIG = {
-  maxRequestsPerMinute: 150,
-  maxConcurrentRequests: 5,
-  requestDelay: 200, // ms between requests
-  retryDelay: 1000, // Base retry delay
-  maxRetries: 3,
-};
-
-// Circuit breaker configuration
-export const CIRCUIT_BREAKER_CONFIG = {
-  failureThreshold: 5,
-  timeout: 30000, // 30 seconds
-  resetTimeout: 60000, // 1 minute
-};
-
-// Enhanced Backend API Client Class with Rate Limiting and Circuit Breaker
-class BackendApiClient {
+// Enhanced backend API call manager
+class BackendAPIManager {
   constructor() {
-    this.consecutiveFailures = 0;
-    this.isCircuitOpen = false;
-    this.lastFailureTime = 0;
-    this.activeRequests = 0;
     this.requestQueue = [];
+    this.activeRequests = 0;
+    this.maxConcurrentRequests = 8; // Increased for institutional usage
+    this.requestHistory = [];
+    this.circuitBreakers = new Map();
+    this.cache = new Map();
+
+    // Rate limiting tracking
+    this.lastWindowReset = Date.now();
+    this.requestsInWindow = 0;
+    this.windowSize = 60000; // 1 minute
   }
 
-  // Circuit breaker check
-  isCircuitBreakerOpen() {
-    if (!this.isCircuitOpen) return false;
+  // Enhanced rate limiting check
+  checkRateLimit() {
+    const now = Date.now();
 
-    const timeSinceFailure = Date.now() - this.lastFailureTime;
-    if (timeSinceFailure > CIRCUIT_BREAKER_CONFIG.resetTimeout) {
-      this.isCircuitOpen = false;
-      this.consecutiveFailures = 0;
-      console.log("🔄 Circuit breaker reset - backend available again");
-      return false;
+    // Reset window if needed
+    if (now - this.lastWindowReset > this.windowSize) {
+      this.requestsInWindow = 0;
+      this.lastWindowReset = now;
+    }
+
+    // Check if we're at the limit
+    if (this.requestsInWindow >= API_CONFIG.rateLimiting.maxRequestsPerMinute) {
+      const waitTime = this.windowSize - (now - this.lastWindowReset);
+      throw new Error(
+        `Rate limit exceeded. Please wait ${Math.ceil(
+          waitTime / 1000
+        )} seconds.`
+      );
     }
 
     return true;
   }
 
-  // Record successful request
-  recordSuccess() {
-    this.consecutiveFailures = 0;
-    if (this.isCircuitOpen) {
-      this.isCircuitOpen = false;
-      console.log("✅ Circuit breaker closed - backend recovered");
+  // Circuit breaker check
+  isCircuitOpen(endpoint) {
+    const breaker = this.circuitBreakers.get(endpoint);
+    if (!breaker) return false;
+
+    // Reset circuit if timeout has passed
+    if (
+      Date.now() - breaker.lastFailure >
+      API_CONFIG.circuitBreaker.resetTimeout
+    ) {
+      this.circuitBreakers.delete(endpoint);
+      return false;
+    }
+
+    return breaker.failures >= API_CONFIG.circuitBreaker.failureThreshold;
+  }
+
+  // Record circuit breaker failure
+  recordFailure(endpoint) {
+    const breaker = this.circuitBreakers.get(endpoint) || {
+      failures: 0,
+      lastFailure: 0,
+    };
+    breaker.failures++;
+    breaker.lastFailure = Date.now();
+    this.circuitBreakers.set(endpoint, breaker);
+
+    if (breaker.failures >= API_CONFIG.circuitBreaker.failureThreshold) {
+      console.warn(`🔥 Circuit breaker opened for ${endpoint}`);
     }
   }
 
-  // Record failed request
-  recordFailure(error) {
-    this.consecutiveFailures++;
-    this.lastFailureTime = Date.now();
+  // Enhanced cache management
+  getCached(key, ttl) {
+    const cached = this.cache.get(key);
+    if (cached && Date.now() - cached.timestamp < ttl) {
+      console.log(`📋 Cache hit for ${key}`);
+      return cached.data;
+    }
 
-    if (this.consecutiveFailures >= CIRCUIT_BREAKER_CONFIG.failureThreshold) {
-      this.isCircuitOpen = true;
-      console.warn(
-        `🚨 Circuit breaker opened - backend temporarily unavailable after ${this.consecutiveFailures} failures`
-      );
+    if (cached) {
+      this.cache.delete(key); // Remove expired cache
+    }
+
+    return null;
+  }
+
+  setCache(key, data) {
+    this.cache.set(key, {
+      data,
+      timestamp: Date.now(),
+    });
+
+    // Prevent memory leaks - limit cache size
+    if (this.cache.size > 1000) {
+      const oldestKey = this.cache.keys().next().value;
+      this.cache.delete(oldestKey);
     }
   }
 
-  // Helper to pause execution
-  sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  // Main API request method with enhanced error handling
+  // Main API call method
   async makeRequest(endpoint, options = {}) {
-    // Check if circuit breaker is open
-    if (this.isCircuitBreakerOpen()) {
-      throw new Error(
-        "Circuit breaker is open - backend temporarily unavailable"
-      );
+    const fullUrl = `${API_CONFIG.backend.baseUrl}${endpoint}`;
+    const cacheKey = `${endpoint}_${JSON.stringify(options)}`;
+
+    // Check circuit breaker
+    if (this.isCircuitOpen(endpoint)) {
+      throw new Error(`Circuit breaker open for ${endpoint}`);
     }
 
-    // Check if we've hit concurrent request limit
-    if (this.activeRequests >= RATE_LIMIT_CONFIG.maxConcurrentRequests) {
-      console.log(
-        "⏳ Max concurrent requests reached, waiting for available slot..."
-      );
-      await this.waitForAvailableSlot();
+    // Check rate limit
+    this.checkRateLimit();
+
+    // Check cache first
+    const ttl = this.getCacheTTL(endpoint);
+    const cached = this.getCached(cacheKey, ttl);
+    if (cached) {
+      return cached;
     }
 
-    const url = `${API_CONFIG.backend.baseUrl}${endpoint}`;
+    // Wait for available slot
+    while (this.activeRequests >= this.maxConcurrentRequests) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    this.activeRequests++;
+    this.requestsInWindow++;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+      () => controller.abort(),
+      API_CONFIG.backend.timeout
+    );
+
+    try {
+      console.log(`🌐 API request to ${endpoint}`);
+
+      const response = await fetch(fullUrl, {
+        method: options.method || "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          ...options.headers,
+        },
+        body: options.body ? JSON.stringify(options.body) : undefined,
+        signal: controller.signal,
+        ...options,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      // Cache successful response
+      this.setCache(cacheKey, data);
+
+      console.log(`✅ API request successful for ${endpoint}`);
+      return data;
+    } catch (error) {
+      clearTimeout(timeoutId);
+
+      // Record failure for circuit breaker
+      this.recordFailure(endpoint);
+
+      if (error.name === "AbortError") {
+        throw new Error(`Request timeout for ${endpoint}`);
+      }
+
+      console.error(`❌ API request failed for ${endpoint}:`, error.message);
+      throw error;
+    } finally {
+      this.activeRequests--;
+    }
+  }
+
+  // Get appropriate cache TTL based on endpoint
+  getCacheTTL(endpoint) {
+    if (endpoint.includes("/quote/")) return API_CONFIG.cache.quoteTTL;
+    if (endpoint.includes("/news/")) return API_CONFIG.cache.newsTTL;
+    if (endpoint.includes("/technicals/"))
+      return API_CONFIG.cache.technicalsTTL;
+    if (endpoint.includes("/universe")) return API_CONFIG.cache.universeTTL;
+    return 60000; // Default 1 minute
+  }
+
+  // Retry logic with exponential backoff
+  async makeRequestWithRetry(
+    endpoint,
+    options = {},
+    maxRetries = API_CONFIG.rateLimiting.retryAttempts
+  ) {
     let lastError;
 
-    // Retry logic with exponential backoff
-    for (let attempt = 1; attempt <= RATE_LIMIT_CONFIG.maxRetries; attempt++) {
-      this.activeRequests++;
-
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        console.log(
-          `🔄 Making API request (attempt ${attempt}/${RATE_LIMIT_CONFIG.maxRetries}): ${endpoint}`
-        );
-
-        const response = await fetch(url, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            ...options.headers,
-          },
-          timeout: options.timeout || 15000, // 15 second timeout
-          ...options,
-        });
-
-        // Handle successful response
-        if (response.ok) {
-          const data = await response.json();
-          this.recordSuccess();
-          console.log(`✅ API request successful: ${endpoint}`);
-          return data;
-        }
-        // Handle rate limiting specifically
-        else if (response.status === 429) {
-          const retryAfter = response.headers.get("retry-after") || 60;
-          console.warn(
-            `🚫 Rate limit hit (429) for ${endpoint}, waiting ${retryAfter} seconds`
-          );
-
-          // If we have more attempts, wait and retry
-          if (attempt < RATE_LIMIT_CONFIG.maxRetries) {
-            await this.sleep(retryAfter * 1000);
-            continue;
-          } else {
-            throw new Error(
-              `Rate limit exceeded after ${RATE_LIMIT_CONFIG.maxRetries} attempts: 429 ${response.statusText}`
-            );
-          }
-        }
-        // Handle other HTTP errors
-        else {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
+        return await this.makeRequest(endpoint, options);
       } catch (error) {
         lastError = error;
-        console.warn(
-          `❌ Attempt ${attempt} failed for ${endpoint}:`,
-          error.message
-        );
 
-        // Record the failure for circuit breaker
-        this.recordFailure(error);
+        if (attempt < maxRetries) {
+          const backoffTime = Math.min(
+            API_CONFIG.rateLimiting.backoffMultiplier ** attempt * 1000,
+            API_CONFIG.rateLimiting.maxBackoffTime
+          );
 
-        // Don't retry on final attempt
-        if (attempt === RATE_LIMIT_CONFIG.maxRetries) break;
-
-        // Calculate exponential backoff delay
-        const backoffDelay =
-          RATE_LIMIT_CONFIG.retryDelay * Math.pow(2, attempt - 1);
-        console.log(
-          `⏳ Waiting ${backoffDelay}ms before retry attempt ${attempt + 1}...`
-        );
-        await this.sleep(backoffDelay);
-      } finally {
-        // Always decrement active requests counter
-        this.activeRequests = Math.max(0, this.activeRequests - 1);
+          console.log(
+            `⏳ Retrying ${endpoint} in ${backoffTime}ms (attempt ${attempt}/${maxRetries})`
+          );
+          await new Promise((resolve) => setTimeout(resolve, backoffTime));
+        }
       }
     }
 
-    // If we get here, all attempts failed
-    throw (
-      lastError ||
-      new Error(
-        `All ${RATE_LIMIT_CONFIG.maxRetries} attempts failed for ${endpoint}`
-      )
-    );
+    throw lastError;
   }
 
-  // Wait for an available request slot
-  async waitForAvailableSlot() {
-    let waitCount = 0;
-    while (this.activeRequests >= RATE_LIMIT_CONFIG.maxConcurrentRequests) {
-      await this.sleep(100); // Check every 100ms
-      waitCount++;
-
-      // Log waiting status every 5 seconds
-      if (waitCount % 50 === 0) {
-        console.log(
-          `⏳ Still waiting for available request slot... (${this.activeRequests}/${RATE_LIMIT_CONFIG.maxConcurrentRequests} active)`
-        );
-      }
-    }
-  }
-
-  // Get current status for debugging
+  // Get manager status for debugging
   getStatus() {
     return {
-      isCircuitOpen: this.isCircuitBreakerOpen(),
-      consecutiveFailures: this.consecutiveFailures,
       activeRequests: this.activeRequests,
-      lastFailureTime: this.lastFailureTime,
+      requestsInWindow: this.requestsInWindow,
+      windowTimeLeft: this.windowSize - (Date.now() - this.lastWindowReset),
+      cacheSize: this.cache.size,
+      circuitBreakers: Array.from(this.circuitBreakers.entries()),
       queueLength: this.requestQueue.length,
     };
+  }
+
+  // Clear all caches (useful for manual refresh)
+  clearCache() {
+    this.cache.clear();
+    console.log("🗑️ All caches cleared");
   }
 }
 
 // Create singleton instance
-const backendClient = new BackendApiClient();
+const apiManager = new BackendAPIManager();
 
-// Main export function - Enhanced with rate limiting and circuit breaker
+// Main export function - Enhanced with comprehensive error handling
 export const makeBackendApiCall = async (endpoint, options = {}) => {
   try {
-    console.log(`📡 Initiating backend API call to: ${endpoint}`);
-    const result = await backendClient.makeRequest(endpoint, options);
+    console.log(`📡 Making backend API call to: ${endpoint}`);
+    const result = await apiManager.makeRequestWithRetry(endpoint, options);
     return result;
   } catch (error) {
-    console.error(
-      `🚨 Backend API call completely failed for ${endpoint}:`,
-      error.message
-    );
+    console.error(`🚨 Backend API call failed for ${endpoint}:`, error.message);
 
-    // Create enhanced error with more context
+    // Create enhanced error with context
     const enhancedError = new Error(
       `Backend API call failed: ${error.message}`
     );
     enhancedError.originalError = error;
     enhancedError.endpoint = endpoint;
     enhancedError.timestamp = new Date().toISOString();
-    enhancedError.backendStatus = backendClient.getStatus();
+    enhancedError.managerStatus = apiManager.getStatus();
 
     throw enhancedError;
   }
 };
 
-// Health check helper - keep your existing functionality
+// Health check helper
 export const checkBackendHealth = async () => {
   try {
     console.log("🏥 Checking backend health...");
@@ -305,9 +329,9 @@ export const checkBackendHealth = async () => {
 
     const isHealthy = response.ok;
     console.log(
-      `🏥 Backend health check result: ${
-        isHealthy ? "✅ Healthy" : "❌ Unhealthy"
-      } (${response.status})`
+      `🏥 Backend health: ${isHealthy ? "✅ Healthy" : "❌ Unhealthy"} (${
+        response.status
+      })`
     );
     return isHealthy;
   } catch (error) {
@@ -316,27 +340,58 @@ export const checkBackendHealth = async () => {
   }
 };
 
-// Debug helper to monitor backend client status
+// Utility functions for debugging and monitoring
 export const getBackendStatus = () => {
-  const status = backendClient.getStatus();
-  console.log("📊 Backend Client Status:", status);
+  const status = apiManager.getStatus();
+  console.log("📊 Backend API Manager Status:", status);
   return status;
 };
 
-// Helper to manually reset circuit breaker (for debugging)
-export const resetCircuitBreaker = () => {
-  backendClient.consecutiveFailures = 0;
-  backendClient.isCircuitOpen = false;
-  backendClient.lastFailureTime = 0;
-  console.log("🔄 Circuit breaker manually reset");
+export const clearBackendCache = () => {
+  apiManager.clearCache();
 };
 
-// Helper to get configuration for debugging
 export const getApiConfig = () => {
   return {
     backendUrl: API_CONFIG.backend.baseUrl,
-    rateLimit: RATE_LIMIT_CONFIG,
-    circuitBreaker: CIRCUIT_BREAKER_CONFIG,
-    currentStatus: backendClient.getStatus(),
+    rateLimiting: API_CONFIG.rateLimiting,
+    cache: API_CONFIG.cache,
+    circuitBreaker: API_CONFIG.circuitBreaker,
+    managerStatus: apiManager.getStatus(),
   };
+};
+
+// Batch request helper for institutional screening
+export const makeBatchBackendCall = async (requests) => {
+  const results = [];
+  const errors = [];
+
+  // Process requests in chunks to respect rate limits
+  const chunkSize = 5;
+  for (let i = 0; i < requests.length; i += chunkSize) {
+    const chunk = requests.slice(i, i + chunkSize);
+
+    const chunkPromises = chunk.map(async (request) => {
+      try {
+        const result = await makeBackendApiCall(
+          request.endpoint,
+          request.options
+        );
+        return { ...request, result, success: true };
+      } catch (error) {
+        errors.push({ ...request, error: error.message });
+        return { ...request, error, success: false };
+      }
+    });
+
+    const chunkResults = await Promise.all(chunkPromises);
+    results.push(...chunkResults);
+
+    // Rate limiting between chunks
+    if (i + chunkSize < requests.length) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  return { results, errors };
 };
