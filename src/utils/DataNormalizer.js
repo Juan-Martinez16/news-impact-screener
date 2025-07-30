@@ -3,7 +3,7 @@
 
 import _ from "lodash";
 
-export class DataNormalizer {
+class DataNormalizer {
   constructor() {
     this.dataVersion = "1.0.0";
     console.log("📊 DataNormalizer initialized");
@@ -285,7 +285,6 @@ export class DataNormalizer {
   // ============================================
   // FALLBACK DATA GENERATORS
   // ============================================
-
   generateFallbackQuote(rawQuote) {
     const symbol = this.extractSymbol(rawQuote) || "UNKNOWN";
     const basePrice = 50 + Math.random() * 200; // $50-$250 range
@@ -345,9 +344,8 @@ export class DataNormalizer {
   }
 }
 
-// Export singleton instance
+// ✅ CORRECTED EXPORTS - Only one export pattern
+// Create singleton instance
+// ✅ ONLY these lines at the end:
 const dataNormalizer = new DataNormalizer();
-//export default dataNormalizer;
-
-// Named exports
-export { DataNormalizer };
+export default dataNormalizer;

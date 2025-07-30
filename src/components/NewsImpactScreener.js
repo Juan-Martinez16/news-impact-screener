@@ -28,9 +28,9 @@ import CatalystAnalysisTab from "./CatalystAnalysisTab";
 import PerformanceTrackingTab from "./PerformanceTrackingTab";
 
 // Import NEW Phase 1 engines
-import NISSCalculationEngine from "../engine/NISSCalculationEngine";
-import InstitutionalDataService from "../api/InstitutionalDataService";
-import DataNormalizer from "../utils/DataNormalizer";
+import NISSCalculationEngine from "../engine/NISSCalculationEngine"; // ✅ Default import (singleton)
+import InstitutionalDataService from "../api/InstitutionalDataService"; // ✅ Default import (singleton)
+import dataNormalizer from "../utils/DataNormalizer"; // ✅ Default import (singleton)
 
 // Import NEW Phase 2 modular components
 import HeaderComponent from "./enhanced/HeaderComponent";
@@ -513,12 +513,206 @@ const NewsImpactScreener = () => {
     },
     [getFilteredResults]
   );
+  // ============================================
+  // MISSING FUNCTION DEFINITIONS - ADD THESE FUNCTIONS
+  // ============================================
 
-  // Clear error messages
+  // Cleanup function for component unmount
+  const handleCleanup = useCallback(() => {
+    console.log("🧹 Cleaning up NewsImpactScreener...");
+
+    // Clear any timers or intervals
+    // Cancel ongoing API requests
+    // Save state to localStorage
+    try {
+      const currentState = {
+        activeTab,
+        watchlist,
+        refreshInterval,
+        version: "3.0",
+        timestamp: new Date().toISOString(),
+      };
+      localStorage.setItem("appState", JSON.stringify(currentState));
+      console.log("💾 State saved on cleanup");
+    } catch (error) {
+      console.warn("State saving failed during cleanup:", error);
+    }
+  }, [activeTab, watchlist, refreshInterval]);
+
+  // Manual refresh handler
+  const handleManualRefresh = useCallback(async () => {
+    console.log("🔄 Manual refresh triggered");
+    setError(null);
+    await handleRefreshData();
+  }, []);
+
+  // Settings change handler
+  const handleSettingsChange = useCallback((setting, value) => {
+    console.log(`⚙️ Settings change: ${setting} = ${value}`);
+
+    switch (setting) {
+      case "refreshInterval":
+        setRefreshInterval(parseInt(value));
+        localStorage.setItem("refreshInterval", value);
+        console.log(`Refresh interval updated to: ${value}ms`);
+        break;
+      case "debugMode":
+        // Handle debug mode toggle
+        console.log(`Debug mode ${value ? "enabled" : "disabled"}`);
+        break;
+      case "autoRefresh":
+        // Handle auto-refresh toggle
+        console.log(`Auto refresh ${value ? "enabled" : "disabled"}`);
+        break;
+      default:
+        console.warn(`Unknown setting: ${setting}`);
+    }
+  }, []);
+
+  // Retry handler for error recovery
+  const handleRetry = useCallback(async (retryType) => {
+    console.log(`🔄 Retry requested: ${retryType}`);
+    setError(null);
+    setLoading(true);
+
+    try {
+      switch (retryType) {
+        case "screening":
+          await handleScreenAllStocks();
+          break;
+        case "refresh":
+          await handleRefreshData();
+          break;
+        case "connection":
+          // Test backend connection
+          try {
+            await InstitutionalDataService.checkBackendHealth();
+            console.log("✅ Backend connection restored");
+          } catch (error) {
+            console.warn("❌ Backend still unavailable");
+          }
+          break;
+        default:
+          console.warn(`Unknown retry type: ${retryType}`);
+      }
+    } catch (error) {
+      console.error(`Retry failed: ${error.message}`);
+      setError(`Retry failed: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Watchlist toggle handler
+  const handleWatchlistToggle = useCallback((symbol) => {
+    console.log(`⭐ Watchlist toggle for: ${symbol}`);
+
+    setWatchlist((prevWatchlist) => {
+      const isInWatchlist = prevWatchlist.includes(symbol);
+      const newWatchlist = isInWatchlist
+        ? prevWatchlist.filter((s) => s !== symbol)
+        : [...prevWatchlist, symbol];
+
+      // Save to localStorage
+      try {
+        localStorage.setItem(
+          "institutionalWatchlist",
+          JSON.stringify(newWatchlist)
+        );
+        console.log(
+          `${isInWatchlist ? "Removed from" : "Added to"} watchlist: ${symbol}`
+        );
+      } catch (error) {
+        console.error("Failed to save watchlist:", error);
+      }
+
+      return newWatchlist;
+    });
+  }, []);
+
+  // Stock selection handler
+  const handleStockSelection = useCallback((stock) => {
+    console.log(`🎯 Stock selected: ${stock?.symbol || "none"}`);
+    setSelectedStock(stock);
+
+    // Track selection for analytics
+    try {
+      const selections = JSON.parse(
+        localStorage.getItem("stockSelections") || "{}"
+      );
+      const symbol = stock?.symbol;
+      if (symbol) {
+        selections[symbol] = (selections[symbol] || 0) + 1;
+        localStorage.setItem("stockSelections", JSON.stringify(selections));
+      }
+    } catch (error) {
+      console.warn("Selection tracking failed:", error);
+    }
+  }, []);
+
+  // Bulk operations handler
+  const handleBulkOperation = useCallback((operation, stocks) => {
+    console.log(`📋 Bulk operation: ${operation} on ${stocks.length} stocks`);
+
+    try {
+      switch (operation) {
+        case "addToWatchlist":
+          const symbolsToAdd = stocks.map((s) => s.symbol).filter((s) => s);
+          setWatchlist((prev) => {
+            const combined = [...new Set([...prev, ...symbolsToAdd])];
+            localStorage.setItem(
+              "institutionalWatchlist",
+              JSON.stringify(combined)
+            );
+            console.log(`Added ${symbolsToAdd.length} stocks to watchlist`);
+            return combined;
+          });
+          break;
+
+        case "removeFromWatchlist":
+          const symbolsToRemove = stocks.map((s) => s.symbol).filter((s) => s);
+          setWatchlist((prev) => {
+            const filtered = prev.filter((s) => !symbolsToRemove.includes(s));
+            localStorage.setItem(
+              "institutionalWatchlist",
+              JSON.stringify(filtered)
+            );
+            console.log(
+              `Removed ${symbolsToRemove.length} stocks from watchlist`
+            );
+            return filtered;
+          });
+          break;
+
+        case "export":
+          handleExportData("csv", stocks);
+          break;
+
+        case "analyze":
+          // Bulk analysis operation
+          console.log(`Starting bulk analysis of ${stocks.length} stocks`);
+          stocks.forEach((stock) => {
+            console.log(
+              `Analysis for ${stock.symbol}: NISS ${stock.nissScore}`
+            );
+          });
+          break;
+
+        default:
+          console.warn(`Unknown bulk operation: ${operation}`);
+      }
+    } catch (error) {
+      console.error(`Bulk operation failed: ${error.message}`);
+      setError(`Bulk operation failed: ${error.message}`);
+    }
+  }, []);
+
+  // Clear error handler
   const handleClearError = useCallback(() => {
     console.log("🧹 Clearing error message");
     setError(null);
   }, []);
+  // Clear error messages
 
   // ============================================
   // EVENT HANDLERS (Complete User Interactions)
@@ -640,7 +834,7 @@ const NewsImpactScreener = () => {
         phase1Engines: {
           nissEngine: !!NISSCalculationEngine,
           dataService: !!InstitutionalDataService,
-          dataNormalizer: !!DataNormalizer,
+          dataNormalizer: !!dataNormalizer,
         },
         serviceStatus: serviceStatus,
         dataIntegrity: {
@@ -705,7 +899,7 @@ const NewsImpactScreener = () => {
       engines: {
         nissEngineVersion: NISSCalculationEngine.version,
         dataServiceVersion: InstitutionalDataService.version,
-        dataNormalizerVersion: DataNormalizer.dataVersion,
+        dataNormalizerVersion: dataNormalizer.dataVersion,
       },
     };
 
