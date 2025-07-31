@@ -1,40 +1,33 @@
 {
   "name": "news-impact-screener",
-  "version": "2.1.0",
-  "private": true,
-  "description": "Institutional-grade news impact screening and trading signal analysis",
-  "homepage": "https://news-impact-screener.vercel.app",
-  "dependencies": {
-    "@testing-library/dom": "^10.4.0",
-    "@testing-library/jest-dom": "^6.6.3",
-    "@testing-library/react": "^16.3.0",
-    "@testing-library/user-event": "^13.5.0",
-    "axios": "^1.10.0",
-    "date-fns": "^4.1.0",
-    "date-fns-tz": "^3.2.0",
-    "lucide-react": "^0.525.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "react-scripts": "5.0.1",
-    "recharts": "^3.1.0",
-    "serve": "^14.2.4",
-    "web-vitals": "^2.1.4"
-  },
+  "version": "3.2.0",
+  "description": "News Impact Screener - Real API Integration",
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "start:backend": "cd backend && npm start",
-    "start:backend:dev": "cd backend && npm run dev",
-    "build:backend": "cd backend && npm install --production",
-    "dev": "concurrently \"npm run start:backend:dev\" \"npm start\"",
-    "build:full": "npm run build && npm run build:backend",
-    "serve:local": "serve -s build -l 3000",
-    "test:integration": "npm test -- --testPathPattern=integration",
-    "analyze": "npm run build && npx source-map-explorer 'build/static/js/*.js'",
-    "health-check": "curl -f http://localhost:3001/health || exit 1",
-    "deploy:check": "npm run build && npm run health-check"
+    "backend": "cd backend && npm run dev",
+    "backend:start": "cd backend && npm start",
+    "dev": "concurrently \"npm run backend\" \"npm start\"",
+    "verify": "bash verification-script.sh",
+    "clean": "rm -rf node_modules backend/node_modules && npm install && cd backend && npm install",
+    "deploy:backend": "cd backend && npm run start",
+    "deploy:frontend": "npm run build"
+  },
+  "dependencies": {
+    "@testing-library/jest-dom": "^5.17.0",
+    "@testing-library/react": "^13.4.0",
+    "@testing-library/user-event": "^13.5.0",
+    "lucide-react": "^0.263.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1",
+    "web-vitals": "^2.1.4",
+    "lodash": "^4.17.21"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
   },
   "eslintConfig": {
     "extends": [
@@ -53,17 +46,5 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
-  },
-  "devDependencies": {
-    "autoprefixer": "^10.4.21",
-    "postcss": "^8.5.6",
-    "tailwindcss": "^3.4.17",
-    "concurrently": "^8.2.2",
-    "source-map-explorer": "^2.5.3"
-  },
-  "proxy": "http://localhost:3001",
-  "engines": {
-    "node": ">=16.0.0",
-    "npm": ">=8.0.0"
   }
 }

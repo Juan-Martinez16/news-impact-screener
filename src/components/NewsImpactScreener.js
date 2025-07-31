@@ -1,5 +1,5 @@
-// src/components/NewsImpactScreener.js - EMERGENCY LOOP FIX
-// Fixed useEffect dependencies causing infinite loops
+// src/components/NewsImpactScreener.js - REAL DATA ONLY
+// NO MOCK DATA - All data fetched from real APIs through backend service
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 
@@ -36,10 +36,10 @@ import HeaderComponent from "./enhanced/HeaderComponent";
 import TabNavigation from "./enhanced/TabNavigation";
 
 const NewsImpactScreener = () => {
-  console.log("🚀 NewsImpactScreener v3.1.5 - LOOP FIX");
+  console.log("🚀 NewsImpactScreener v3.2.0 - REAL DATA ONLY");
 
   // ============================================
-  // CORE STATE MANAGEMENT
+  // CORE STATE MANAGEMENT (OPTIMIZED)
   // ============================================
 
   const [activeTab, setActiveTab] = useState("screener");
@@ -48,7 +48,7 @@ const NewsImpactScreener = () => {
   const [screeningResults, setScreeningResults] = useState([]);
   const [selectedStock, setSelectedStock] = useState(null);
 
-  // Market context - stable initial state
+  // Market context - real data only
   const [marketContext, setMarketContext] = useState({
     volatility: "NORMAL",
     trend: "NEUTRAL",
@@ -56,8 +56,10 @@ const NewsImpactScreener = () => {
     spyChange: 0,
     vix: 20,
     lastUpdate: new Date(),
+    dataSource: "REAL",
   });
 
+  // Watchlist - persisted in localStorage
   const [watchlist, setWatchlist] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("institutionalWatchlist") || "[]");
@@ -66,9 +68,20 @@ const NewsImpactScreener = () => {
     }
   });
 
-  const [refreshInterval, setRefreshInterval] = useState(300000); // Static - no localStorage in useState
+  // UI state
+  const [refreshing, setRefreshing] = useState(false);
+  const [exportInProgress, setExportInProgress] = useState(false);
 
-  // Filtering and search state
+  // Service status - real backend only
+  const [realServiceStatus, setRealServiceStatus] = useState({
+    backendHealth: false,
+    version: "3.2.0",
+    cacheSize: 0,
+    dataSource: "REAL_ONLY",
+    lastHealthCheck: null,
+  });
+
+  // Filtering and search state (simplified)
   const [searchQuery, setSearchQuery] = useState("");
   const [filters, setFilters] = useState({
     nissRange: "all",
@@ -87,23 +100,11 @@ const NewsImpactScreener = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [resultsPerPage, setResultsPerPage] = useState(25);
 
-  // UI state
-  const [refreshing, setRefreshing] = useState(false);
-  const [exportInProgress, setExportInProgress] = useState(false);
-
-  // Service status - initialized once
-  const [realServiceStatus, setRealServiceStatus] = useState({
-    backendHealth: false,
-    version: "3.1.5",
-    cacheSize: 0,
-    lastHealthCheck: null,
-  });
-
   // ============================================
-  // STABLE COMPUTED VALUES (No function dependencies)
+  // COMPUTED VALUES (OPTIMIZED - NO FUNCTION DEPENDENCIES)
   // ============================================
 
-  // Available sectors - static list (not computed from results)
+  // Available sectors - static list
   const availableSectors = useMemo(() => {
     return [
       "Technology",
@@ -165,71 +166,12 @@ const NewsImpactScreener = () => {
   }, [screeningResults]); // ONLY screeningResults
 
   // ============================================
-  // STABLE EVENT HANDLERS (NO CIRCULAR DEPENDENCIES)
+  // REAL DATA LOADING FUNCTIONS
   // ============================================
 
-  // Generate mock data - STABLE FUNCTION
-  const generateMockData = useCallback(() => {
-    console.log("🎭 Generating mock data...");
-
-    const symbols = [
-      "AAPL",
-      "MSFT",
-      "GOOGL",
-      "AMZN",
-      "TSLA",
-      "NVDA",
-      "META",
-      "NFLX",
-    ];
-
-    return symbols.map((symbol, index) => {
-      const basePrice = 50 + Math.random() * 200;
-      const nissScore = (Math.random() - 0.3) * 200; // Slight bullish bias
-
-      return {
-        symbol,
-        company: `${symbol} Inc.`,
-        currentPrice: basePrice,
-        nissScore,
-        confidence: ["HIGH", "MEDIUM", "LOW"][Math.floor(Math.random() * 3)],
-        sector:
-          availableSectors[Math.floor(Math.random() * availableSectors.length)],
-        marketCap: (1 + Math.random() * 500) * 1e9,
-        priceData: {
-          change: (Math.random() - 0.5) * 10,
-          changePercent: (Math.random() - 0.5) * 5,
-          volume: Math.floor(1000000 + Math.random() * 50000000),
-        },
-        volumeData: {
-          relativeVolume: 0.5 + Math.random() * 3,
-          volume: Math.floor(1000000 + Math.random() * 50000000),
-        },
-        technicalData: {
-          atr: basePrice * 0.025,
-          rsi: 30 + Math.random() * 40,
-        },
-        latestNews: {
-          headline: `Breaking news for ${symbol}`,
-          timestamp: new Date().toISOString(),
-          source: "Mock News",
-        },
-        nissComponents: {
-          newsImpact: (Math.random() - 0.5) * 40,
-          volumeAnalysis: (Math.random() - 0.5) * 30,
-          optionsFlow: (Math.random() - 0.5) * 25,
-          priceAction: (Math.random() - 0.5) * 35,
-          momentum: (Math.random() - 0.5) * 30,
-          relativeStrength: (Math.random() - 0.5) * 25,
-        },
-        lastUpdate: new Date().toISOString(),
-      };
-    });
-  }, [availableSectors]); // ONLY depends on availableSectors
-
-  // Initial load - STABLE FUNCTION, NO LOOP-CAUSING DEPENDENCIES
-  const handleInitialLoad = useCallback(() => {
-    console.log("📊 Initial load starting...");
+  // Load real data - NO MOCK FALLBACKS
+  const loadRealData = useCallback(async () => {
+    console.log("📊 Loading REAL data from backend APIs...");
 
     if (loading) {
       console.log("⏭️ Already loading, skipping...");
@@ -239,27 +181,48 @@ const NewsImpactScreener = () => {
     setLoading(true);
     setError(null);
 
-    // Use setTimeout to prevent blocking and allow for cleanup
-    const timeoutId = setTimeout(() => {
-      try {
-        const mockData = generateMockData();
-        console.log(`✅ Mock data generated: ${mockData.length} stocks`);
-        setScreeningResults(mockData);
-      } catch (error) {
-        console.error("❌ Initial load failed:", error);
-        setError(`Failed to load data: ${error.message}`);
-      } finally {
-        setLoading(false);
+    try {
+      // Check backend health first
+      const healthStatus = await InstitutionalDataService.getHealthReport();
+      setRealServiceStatus(healthStatus);
+
+      if (healthStatus.overall !== "HEALTHY") {
+        throw new Error(
+          `Backend service is ${healthStatus.overall}: ${
+            healthStatus.error || "API unavailable"
+          }`
+        );
       }
-    }, 100);
 
-    // Cleanup function
-    return () => clearTimeout(timeoutId);
-  }, [loading, generateMockData]); // MINIMAL DEPENDENCIES
+      // Load real market context
+      const realMarketContext =
+        await InstitutionalDataService.getMarketContext();
+      setMarketContext(realMarketContext);
 
-  // Refresh data - STABLE FUNCTION
-  const handleRefreshData = useCallback(() => {
-    console.log("🔄 Refresh starting...");
+      // Perform real stock screening
+      const realScreeningResults =
+        await InstitutionalDataService.screenAllStocks({
+          nissThreshold: 0, // Get all stocks
+          minConfidence: "LOW", // Include all confidence levels
+          maxResults: 50, // Start with 50, will expand to 200+
+        });
+
+      console.log(`✅ Real data loaded: ${realScreeningResults.length} stocks`);
+      setScreeningResults(realScreeningResults);
+    } catch (error) {
+      console.error("❌ Failed to load REAL data:", error.message);
+      setError(`Unable to load real market data: ${error.message}`);
+
+      // Don't fallback to mock data - show user the real error
+      setScreeningResults([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [loading]); // MINIMAL DEPENDENCIES
+
+  // Refresh real data - NO MOCK FALLBACKS
+  const handleRefreshData = useCallback(async () => {
+    console.log("🔄 Refreshing REAL data...");
 
     if (loading || refreshing) {
       console.log("⏭️ Already refreshing, skipping...");
@@ -269,23 +232,24 @@ const NewsImpactScreener = () => {
     setRefreshing(true);
     setError(null);
 
-    const timeoutId = setTimeout(() => {
-      try {
-        const refreshedData = generateMockData();
-        console.log(`✅ Data refreshed: ${refreshedData.length} stocks`);
-        setScreeningResults(refreshedData);
-      } catch (error) {
-        console.error("❌ Refresh failed:", error);
-        setError(`Refresh failed: ${error.message}`);
-      } finally {
-        setRefreshing(false);
-      }
-    }, 500);
+    try {
+      // Clear cache and reload
+      InstitutionalDataService.clearCache();
+      await loadRealData();
 
-    return () => clearTimeout(timeoutId);
-  }, [loading, refreshing, generateMockData]); // MINIMAL DEPENDENCIES
+      console.log("✅ Real data refresh complete");
+    } catch (error) {
+      console.error("❌ Refresh failed:", error.message);
+      setError(`Refresh failed: ${error.message}`);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loading, refreshing, loadRealData]);
 
-  // Other handlers - ALL WITH EMPTY DEPENDENCIES TO PREVENT LOOPS
+  // ============================================
+  // EVENT HANDLERS (STABLE - NO DEPENDENCIES)
+  // ============================================
+
   const handleWatchlistToggle = useCallback((symbol) => {
     console.log(`⭐ Watchlist toggle: ${symbol}`);
 
@@ -295,189 +259,140 @@ const NewsImpactScreener = () => {
         ? prev.filter((s) => s !== symbol)
         : [...prev, symbol];
 
+      // Persist to localStorage
       try {
         localStorage.setItem(
           "institutionalWatchlist",
           JSON.stringify(newWatchlist)
         );
       } catch (error) {
-        console.error("Watchlist save failed:", error);
+        console.warn("Failed to save watchlist:", error);
       }
 
       return newWatchlist;
     });
   }, []); // NO DEPENDENCIES
 
-  const handleStockSelection = useCallback((stock) => {
-    console.log(`🎯 Stock selected: ${stock?.symbol || "none"}`);
+  const handleStockSelect = useCallback((stock) => {
+    console.log(`📊 Stock selected: ${stock.symbol}`);
     setSelectedStock(stock);
   }, []); // NO DEPENDENCIES
 
+  const handleSettingsChange = useCallback((newSettings) => {
+    console.log("⚙️ Settings updated:", newSettings);
+    // Handle settings changes
+  }, []); // NO DEPENDENCIES
+
   const handleExportData = useCallback(
-    (format = "csv") => {
-      console.log(`📁 Export: ${format}`);
-
-      if (screeningResults.length === 0) {
-        setError("No data to export");
-        return;
-      }
-
+    (format) => {
+      console.log(`📥 Exporting data in ${format} format...`);
       setExportInProgress(true);
 
       setTimeout(() => {
         try {
-          const exportData = screeningResults.map((stock) => ({
-            Symbol: stock.symbol,
-            Company: stock.company,
-            Price: stock.currentPrice?.toFixed(2),
-            "NISS Score": stock.nissScore?.toFixed(2),
-            Confidence: stock.confidence,
-            Sector: stock.sector,
-          }));
+          if (format === "csv") {
+            // Export screening results as CSV
+            const csvData = screeningResults.map((stock) => ({
+              Symbol: stock.symbol,
+              Company: stock.company,
+              Price: stock.currentPrice,
+              "NISS Score": stock.nissScore,
+              Confidence: stock.confidence,
+              Sector: stock.sector,
+              "Market Cap": stock.marketCap,
+              "Data Source": stock.dataSource || "REAL",
+            }));
 
-          const csvContent = [
-            Object.keys(exportData[0]).join(","),
-            ...exportData.map((row) => Object.values(row).join(",")),
-          ].join("\n");
+            const csvContent = [
+              Object.keys(csvData[0]).join(","),
+              ...csvData.map((row) => Object.values(row).join(",")),
+            ].join("\n");
 
-          const blob = new Blob([csvContent], { type: "text/csv" });
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement("a");
-          link.href = url;
-          link.download = `niss-data-${Date.now()}.csv`;
-          link.click();
-          URL.revokeObjectURL(url);
+            const blob = new Blob([csvContent], { type: "text/csv" });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `news-impact-screener-${
+              new Date().toISOString().split("T")[0]
+            }.csv`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+          }
 
           console.log("✅ Export completed");
         } catch (error) {
           console.error("❌ Export failed:", error);
-          setError("Export failed");
+          setError(`Export failed: ${error.message}`);
         } finally {
           setExportInProgress(false);
         }
-      }, 100);
+      }, 1000);
     },
     [screeningResults]
   ); // ONLY depends on screeningResults
 
-  const handleSettingsChange = useCallback((setting, value) => {
-    console.log(`⚙️ Settings: ${setting} = ${value}`);
-
-    switch (setting) {
-      case "refreshInterval":
-        setRefreshInterval(parseInt(value));
-        break;
-      case "resultsPerPage":
-        setResultsPerPage(parseInt(value));
-        setCurrentPage(1);
-        break;
-      default:
-        console.warn(`Unknown setting: ${setting}`);
-    }
-  }, []); // NO DEPENDENCIES
-
-  const handleTabChange = useCallback((newTab) => {
-    console.log(`🔄 Tab change: ${newTab}`);
-    setActiveTab(newTab);
-    setSelectedStock(null);
-    setError(null);
-  }, []); // NO DEPENDENCIES
-
-  const handleClearError = useCallback(() => {
-    console.log("🧹 Error cleared");
-    setError(null);
-  }, []); // NO DEPENDENCIES
-
-  // Search handler
-  const handleSearchChange = useCallback((newQuery) => {
-    console.log(`🔍 Search: ${newQuery}`);
-    setSearchQuery(newQuery);
-    setCurrentPage(1);
-  }, []); // NO DEPENDENCIES
-
-  // Filter handler
-  const handleFiltersChange = useCallback((newFilters) => {
-    console.log("🔧 Filters changed:", newFilters);
-    setFilters((prev) => ({ ...prev, ...newFilters }));
-    setCurrentPage(1);
-  }, []); // NO DEPENDENCIES
-
-  // Sort handlers
-  const handleSortChange = useCallback(
-    (newSortBy) => {
-      console.log(`📊 Sort: ${newSortBy}`);
-      const newDirection =
-        sortBy === newSortBy && sortDirection === "desc" ? "asc" : "desc";
-      setSortBy(newSortBy);
-      setSortDirection(newDirection);
-      setCurrentPage(1);
-    },
-    [sortBy, sortDirection]
-  ); // MINIMAL DEPENDENCIES
-
-  const handleSortDirectionChange = useCallback((newDirection) => {
-    console.log(`🔄 Sort direction: ${newDirection}`);
-    setSortDirection(newDirection);
-  }, []); // NO DEPENDENCIES
-
   // ============================================
-  // FIXED EFFECTS (No circular dependencies)
+  // EFFECTS (MINIMAL DEPENDENCIES)
   // ============================================
 
-  // FIXED: Main initialization - ONLY runs once on mount
+  // Initial load effect - runs once
   useEffect(() => {
-    console.log("📊 NewsImpactScreener initializing...");
-    handleInitialLoad();
-  }, []); // EMPTY DEPENDENCIES - only run once
+    console.log("🎬 Initial load effect triggered");
+    loadRealData();
+  }, []); // NO DEPENDENCIES - runs once only
 
-  // FIXED: Auto-refresh - separate effect with stable dependencies
+  // Auto-refresh effect - stable interval
   useEffect(() => {
-    if (refreshInterval <= 0) return;
-
-    console.log(`⏰ Setting up auto-refresh: ${refreshInterval}ms`);
+    const autoRefreshInterval = 300000; // 5 minutes
 
     const intervalId = setInterval(() => {
-      console.log("🔄 Auto-refresh tick");
-      handleRefreshData();
-    }, refreshInterval);
+      if (!loading && !refreshing) {
+        console.log("⏰ Auto-refresh triggered");
+        handleRefreshData();
+      }
+    }, autoRefreshInterval);
 
     return () => {
-      console.log("🛑 Clearing auto-refresh interval");
       clearInterval(intervalId);
+      console.log("🧹 Auto-refresh interval cleared");
     };
-  }, [refreshInterval]); // ONLY depends on refreshInterval
+  }, [loading, refreshing, handleRefreshData]);
 
   // ============================================
-  // MEMOIZED PROPS (Prevent child re-renders)
+  // MEMOIZED VALUES FOR PROPS (STABLE)
   // ============================================
-
-  const memoizedMarketRegime = useMemo(
-    () => ({
-      trend: marketContext.trend,
-      volatility: marketContext.volatility,
-      vix: marketContext.vix,
-      breadth: marketContext.breadth,
-      spyChange: marketContext.spyChange,
-    }),
-    [
-      marketContext.trend,
-      marketContext.volatility,
-      marketContext.vix,
-      marketContext.breadth,
-      marketContext.spyChange,
-    ]
-  );
 
   const memoizedServiceStatus = useMemo(
     () => ({
       backendHealth: realServiceStatus.backendHealth,
       version: realServiceStatus.version,
       cacheSize: realServiceStatus.cacheSize,
+      dataSource: realServiceStatus.dataSource,
     }),
     [
       realServiceStatus.backendHealth,
       realServiceStatus.version,
       realServiceStatus.cacheSize,
+      realServiceStatus.dataSource,
+    ]
+  );
+
+  const memoizedMarketRegime = useMemo(
+    () => ({
+      volatility: marketContext.volatility,
+      trend: marketContext.trend,
+      breadth: marketContext.breadth,
+      spyChange: marketContext.spyChange,
+      vix: marketContext.vix,
+      dataSource: marketContext.dataSource,
+    }),
+    [
+      marketContext.volatility,
+      marketContext.trend,
+      marketContext.breadth,
+      marketContext.spyChange,
+      marketContext.vix,
+      marketContext.dataSource,
     ]
   );
 
@@ -525,16 +440,24 @@ const NewsImpactScreener = () => {
               <AlertCircle className="h-5 w-5 text-red-400 mr-3 mt-0.5" />
               <div className="flex-1">
                 <h3 className="text-sm font-medium text-red-800">
-                  Error Occurred
+                  Real Data Error
                 </h3>
                 <p className="text-sm text-red-700 mt-1">{error}</p>
+                <div className="mt-2">
+                  <button
+                    onClick={() => setError(null)}
+                    className="text-red-600 hover:text-red-500 text-sm underline"
+                  >
+                    Dismiss
+                  </button>
+                  <button
+                    onClick={handleRefreshData}
+                    className="ml-4 text-red-600 hover:text-red-500 text-sm underline"
+                  >
+                    Retry
+                  </button>
+                </div>
               </div>
-              <button
-                onClick={handleClearError}
-                className="text-red-700 text-sm underline hover:text-red-800 transition-colors ml-4"
-              >
-                Dismiss
-              </button>
             </div>
           </div>
         </div>
@@ -545,158 +468,90 @@ const NewsImpactScreener = () => {
         {/* Tab Navigation */}
         <TabNavigation
           activeTab={activeTab}
-          onTabChange={handleTabChange}
-          summaryStats={memoizedSummaryStats}
-          loading={loading}
+          onTabChange={setActiveTab}
+          resultsCount={screeningResults.length}
+          loadingState={loading || refreshing}
         />
 
         {/* Tab Content */}
         <div className="mt-6">
           {activeTab === "screener" && (
             <StockScreener
-              // Core data
-              stocks={screeningResults}
-              totalResults={screeningResults.length}
-              selectedStock={selectedStock}
-              watchlist={watchlist}
-              // State - ALL REAL HANDLERS
-              loading={loading}
-              searchQuery={searchQuery}
-              setSearchQuery={handleSearchChange}
-              filters={filters}
-              setFilters={handleFiltersChange}
-              sortBy={sortBy}
-              setSortBy={handleSortChange}
-              sortDirection={sortDirection}
-              setSortDirection={handleSortDirectionChange}
-              // Actions
-              onRefresh={handleRefreshData}
+              stockData={screeningResults}
+              loading={loading || refreshing}
+              error={error}
+              onStockSelect={handleStockSelect}
               onWatchlistToggle={handleWatchlistToggle}
-              onExportData={handleExportData}
-              setSelectedStock={handleStockSelection}
-              // Status
-              marketRegime={memoizedMarketRegime}
-              backendHealth={realServiceStatus.backendHealth}
-              serviceStatus={memoizedServiceStatus}
-              connectionStatus={
-                realServiceStatus.backendHealth ? "connected" : "disconnected"
-              }
-              refreshing={refreshing}
-              exportInProgress={exportInProgress}
-              // Additional data
-              availableSectors={availableSectors}
-              summaryStats={memoizedSummaryStats}
-              // Pagination
+              watchlist={watchlist}
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              filters={filters}
+              onFiltersChange={setFilters}
+              sortBy={sortBy}
+              onSortChange={setSortBy}
+              sortDirection={sortDirection}
+              onSortDirectionChange={setSortDirection}
               currentPage={currentPage}
-              setCurrentPage={setCurrentPage}
-              totalPages={Math.ceil(screeningResults.length / resultsPerPage)}
+              onPageChange={setCurrentPage}
               resultsPerPage={resultsPerPage}
+              onResultsPerPageChange={setResultsPerPage}
+              availableSectors={availableSectors}
+              marketContext={marketContext}
             />
           )}
 
           {activeTab === "catalyst" && (
             <CatalystAnalysisTab
-              stocks={screeningResults}
-              selectedStock={selectedStock}
-              setSelectedStock={handleStockSelection}
-              loading={loading}
+              stockData={screeningResults}
+              loading={loading || refreshing}
               error={error}
-              marketRegime={memoizedMarketRegime}
-              backendHealth={realServiceStatus.backendHealth}
-              serviceStatus={memoizedServiceStatus}
-              connectionStatus={
-                realServiceStatus.backendHealth ? "connected" : "disconnected"
-              }
-              alerts={[]}
-              onAnalyzeStock={() => {}}
+              onStockSelect={handleStockSelect}
+              watchlist={watchlist}
               onWatchlistToggle={handleWatchlistToggle}
+              marketContext={marketContext}
             />
           )}
 
           {activeTab === "performance" && (
             <PerformanceTrackingTab
-              historicalPerformance={[]}
-              stockData={{}}
-              loading={loading}
+              historicalPerformance={[]} // Will populate with real historical data
+              stockData={screeningResults}
+              loading={loading || refreshing}
               error={error}
-              marketRegime={memoizedMarketRegime}
-              onWatchlistToggle={handleWatchlistToggle}
-              onAnalyzeStock={() => {}}
-              onExport={handleExportData}
-              backendHealth={realServiceStatus.backendHealth}
-              serviceStatus={memoizedServiceStatus}
-              connectionStatus={
-                realServiceStatus.backendHealth ? "connected" : "disconnected"
-              }
-              watchlist={watchlist}
-              summaryStats={memoizedSummaryStats}
+              marketContext={marketContext}
             />
           )}
         </div>
       </div>
 
-      {/* Debug Panel - STABLE */}
-      {process.env.NODE_ENV === "development" && (
-        <div className="fixed bottom-4 right-4 bg-gray-900 text-white p-3 rounded-lg text-xs max-w-sm z-50 shadow-lg">
-          <div className="font-semibold mb-2 text-green-400">
-            🛠️ Debug v3.1.5 (LOOP FIXED)
-          </div>
-          <div className="space-y-1">
-            <div className="grid grid-cols-2 gap-2">
-              <div>Results:</div>
-              <div className="text-yellow-400">{screeningResults.length}</div>
-
-              <div>Tab:</div>
-              <div className="text-purple-400">{activeTab}</div>
-
-              <div>Search:</div>
-              <div className="text-orange-400">{searchQuery || "None"}</div>
-
-              <div>Loading:</div>
-              <div className={loading ? "text-yellow-400" : "text-green-400"}>
-                {loading ? "Yes" : "No"}
-              </div>
-
-              <div>Renders:</div>
-              <div className="text-blue-400">{window.renderCount || 0}</div>
-
-              <div>Refreshing:</div>
-              <div
-                className={refreshing ? "text-yellow-400" : "text-green-400"}
-              >
-                {refreshing ? "Yes" : "No"}
+      {/* Loading Overlay */}
+      {(loading || refreshing) && (
+        <div className="fixed inset-0 bg-black bg-opacity-10 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 shadow-xl max-w-sm mx-4">
+            <div className="flex items-center">
+              <RefreshCw className="h-6 w-6 text-blue-600 animate-spin mr-3" />
+              <div>
+                <h3 className="text-lg font-medium text-gray-900">
+                  {loading ? "Loading Real Data..." : "Refreshing..."}
+                </h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  Fetching data from real APIs...
+                </p>
               </div>
             </div>
           </div>
+        </div>
+      )}
 
-          <div className="mt-3 pt-2 border-t border-gray-700 space-y-1">
-            <button
-              onClick={() => (window.renderCount = 0)}
-              className="block w-full text-left text-blue-300 text-xs hover:text-blue-200"
-            >
-              🔄 Reset Render Count
-            </button>
-            <button
-              onClick={() =>
-                console.log("State:", {
-                  activeTab,
-                  loading,
-                  error,
-                  resultsCount: screeningResults.length,
-                })
-              }
-              className="block w-full text-left text-green-300 text-xs hover:text-green-200"
-            >
-              📊 Log State
-            </button>
+      {/* Export Progress */}
+      {exportInProgress && (
+        <div className="fixed bottom-4 right-4 bg-white rounded-lg shadow-lg p-4 max-w-sm">
+          <div className="flex items-center">
+            <Download className="h-5 w-5 text-green-600 animate-pulse mr-3" />
+            <span className="text-sm font-medium text-gray-900">
+              Exporting data...
+            </span>
           </div>
-
-          {/* Loop warning */}
-          {window.renderCount > 30 && (
-            <div className="mt-2 pt-2 border-t border-red-600 text-red-300 text-xs">
-              ⚠️ LOOP DETECTED: {window.renderCount} renders
-            </div>
-          )}
         </div>
       )}
     </div>
