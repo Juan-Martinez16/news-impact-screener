@@ -1,5 +1,5 @@
-// src/components/StockScreener.js - COMPLETE ENHANCED VERSION
-// Enhanced to work with NewsImpactScreener while maintaining all existing institutional features
+// src/components/StockScreener.js - FIXED VERSION - Infinite Loop Resolved
+// Emergency fixes applied to stop vibrating screen
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
@@ -28,6 +28,9 @@ import {
   CheckCircle,
   Info,
   Zap,
+  Target,
+  Shield,
+  Percent,
 } from "lucide-react";
 
 const StockScreener = ({
@@ -53,7 +56,7 @@ const StockScreener = ({
   onWatchlistToggle,
   onExportData,
 
-  // Status props
+  // Status props - MEMOIZED TO PREVENT RECREATION
   marketRegime = {},
   backendHealth = true,
   serviceStatus = {},
@@ -61,7 +64,7 @@ const StockScreener = ({
   refreshing = false,
   exportInProgress = false,
 
-  // Additional data
+  // Additional data - MEMOIZED TO PREVENT RECREATION
   availableSectors = [],
   summaryStats = {},
   watchlist = [],
@@ -72,60 +75,473 @@ const StockScreener = ({
   totalPages = 1,
   resultsPerPage = 25,
 }) => {
-  // Local component state
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-  const [selectedRows, setSelectedRows] = useState(new Set());
-  const [viewMode, setViewMode] = useState("table"); // table, cards, compact
-  const [showDetails, setShowDetails] = useState({});
-  const [sortHistory, setSortHistory] = useState([]);
-
-  // Local filter state for UI responsiveness
-  const [localFilters, setLocalFilters] = useState(filters);
-
-  // Sync local filters with parent when they change
-  useEffect(() => {
-    setLocalFilters(filters);
-  }, [filters]);
-
-  // Handle local filter changes with debouncing
-  const handleLocalFilterChange = useCallback(
-    (newFilters) => {
-      setLocalFilters((prev) => ({ ...prev, ...newFilters }));
-
-      // Debounce the parent update
-      const timeoutId = setTimeout(() => {
-        setFilters(newFilters);
-      }, 300);
-
-      return () => clearTimeout(timeoutId);
-    },
-    [setFilters]
+  // DEBUG: Add render counter to track loops
+  console.log(
+    "🎯 StockScreener render #",
+    ++window.renderCount || (window.renderCount = 1)
   );
 
-  // Handle sorting with history tracking
-  const handleSort = useCallback(
-    (field) => {
-      let newDirection = "desc";
+  // ============================================
+  // SIMPLIFIED STATE MANAGEMENT (6 core states only)
+  // ============================================
 
-      if (sortBy === field) {
-        newDirection = sortDirection === "desc" ? "asc" : "desc";
+  // Filter state (Enhanced Trading Cheat Sheet ranges)
+  const [activeFilters, setActiveFilters] = useState({
+    nissRange: "all",
+    confidence: "all",
+    marketCap: "all",
+    sector: "all",
+    volume: "all",
+    timeframe: "24h",
+  });
+
+  // Sort configuration - SIMPLIFIED
+  const [sortConfig, setSortConfig] = useState({
+    field: "nissScore",
+    direction: "desc",
+  });
+
+  // UI state
+  const [viewMode, setViewMode] = useState("table");
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+
+  // Selection and expansion state
+  const [selectedStocks, setSelectedStocks] = useState(new Set());
+  const [expandedDetails, setExpandedDetails] = useState(new Set());
+
+  // ============================================
+  // STABLE UTILITY FUNCTIONS (Moved outside render, no dependencies)
+  // ============================================
+
+  // Get NISS score color - NO DEPENDENCIES
+  const getNissScoreColor = useCallback((score) => {
+    if (score > 75) return "text-green-600 font-bold";
+    if (score > 60) return "text-green-500";
+    if (score > -60) return "text-gray-600";
+    if (score > -75) return "text-red-500";
+    return "text-red-600 font-bold";
+  }, []); // EMPTY DEPENDENCIES
+
+  // Get confidence badge styling - NO DEPENDENCIES
+  const getConfidenceBadge = useCallback((confidence) => {
+    switch (confidence) {
+      case "HIGH":
+        return "bg-green-100 text-green-800 border-green-200";
+      case "MEDIUM":
+        return "bg-yellow-100 text-yellow-800 border-yellow-200";
+      case "LOW":
+        return "bg-red-100 text-red-800 border-red-200";
+      default:
+        return "bg-gray-100 text-gray-800 border-gray-200";
+    }
+  }, []); // EMPTY DEPENDENCIES
+
+  // Format currency - NO DEPENDENCIES
+  const formatCurrency = useCallback((value) => {
+    if (!value) return "N/A";
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  }, []); // EMPTY DEPENDENCIES
+
+  // Format percentage - NO DEPENDENCIES
+  const formatPercentage = useCallback((value) => {
+    if (value === null || value === undefined) return "N/A";
+    return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
+  }, []); // EMPTY DEPENDENCIES
+
+  // Format market cap - NO DEPENDENCIES
+  const formatMarketCap = useCallback((value) => {
+    if (!value) return "N/A";
+    if (value >= 1e12) return `$${(value / 1e12).toFixed(1)}T`;
+    if (value >= 1e9) return `$${(value / 1e9).toFixed(1)}B`;
+    if (value >= 1e6) return `$${(value / 1e6).toFixed(1)}M`;
+    return `$${value.toFixed(0)}`;
+  }, []); // EMPTY DEPENDENCIES
+
+  // ============================================
+  // FIXED TRADING FUNCTIONS (No circular dependencies)
+  // ============================================
+
+  // Generate trade signal - STABLE FUNCTION WITH NO DEPENDENCIES
+  const generateTradeSignal = useCallback((stock) => {
+    if (!stock) {
+      return {
+        action: "HOLD",
+        color: "bg-gray-400",
+        textColor: "text-white",
+        priority: 3,
+      };
+    }
+
+    const nissScore = stock.nissScore || 0;
+    const confidence = stock.confidence || "LOW";
+    const relativeVolume = stock.volumeData?.relativeVolume || 1;
+    const priceChange = stock.priceData?.change || 0;
+
+    // Strong Buy Signal
+    if (
+      nissScore > 75 &&
+      confidence === "HIGH" &&
+      relativeVolume > 2 &&
+      priceChange > 0
+    ) {
+      return {
+        action: "STRONG BUY",
+        color: "bg-green-600",
+        textColor: "text-white",
+        priority: 1,
+      };
+    }
+
+    // Buy Signal
+    if (nissScore >= 60 && confidence !== "LOW" && relativeVolume > 1.5) {
+      return {
+        action: "BUY",
+        color: "bg-green-500",
+        textColor: "text-white",
+        priority: 2,
+      };
+    }
+
+    // Strong Sell Signal
+    if (
+      nissScore < -75 &&
+      confidence === "HIGH" &&
+      relativeVolume > 2 &&
+      priceChange < 0
+    ) {
+      return {
+        action: "STRONG SELL",
+        color: "bg-red-600",
+        textColor: "text-white",
+        priority: 1,
+      };
+    }
+
+    // Sell Signal
+    if (nissScore <= -60 && confidence !== "LOW" && relativeVolume > 1.5) {
+      return {
+        action: "SELL",
+        color: "bg-red-500",
+        textColor: "text-white",
+        priority: 2,
+      };
+    }
+
+    // Default Hold
+    return {
+      action: "HOLD",
+      color: "bg-gray-400",
+      textColor: "text-white",
+      priority: 3,
+    };
+  }, []); // NO DEPENDENCIES TO PREVENT LOOPS
+
+  // Calculate trade setup - STABLE FUNCTION WITH NO DEPENDENCIES
+  const calculateTradeSetup = useCallback((stock) => {
+    if (!stock || !stock.currentPrice) {
+      return { action: "HOLD", message: "Insufficient data" };
+    }
+
+    const currentPrice = stock.currentPrice;
+    const nissScore = stock.nissScore || 0;
+    const confidence = stock.confidence || "LOW";
+    const atr = stock.technicalData?.atr || currentPrice * 0.025;
+
+    // Get signal without circular dependency
+    const signal = generateTradeSignal(stock);
+
+    if (signal.action === "HOLD") {
+      return { action: "HOLD", message: "No clear setup" };
+    }
+
+    const isBullish = signal.action.includes("BUY");
+
+    // Entry price
+    const entry = currentPrice;
+
+    // Stop loss calculation
+    const stopMultiplier =
+      confidence === "HIGH" ? 1.5 : confidence === "MEDIUM" ? 2.0 : 2.5;
+    const stopLoss = isBullish
+      ? entry - atr * stopMultiplier
+      : entry + atr * stopMultiplier;
+    const riskPerShare = Math.abs(entry - stopLoss);
+
+    // Calculate targets
+    const baseTarget = riskPerShare * 2.5;
+    const targets = [];
+
+    if (isBullish) {
+      targets.push({
+        level: 1,
+        price: entry + baseTarget * 0.6,
+        percentage: ((entry + baseTarget * 0.6) / entry - 1) * 100,
+        probability: 70,
+      });
+      targets.push({
+        level: 2,
+        price: entry + baseTarget * 1.0,
+        percentage: ((entry + baseTarget * 1.0) / entry - 1) * 100,
+        probability: 50,
+      });
+      targets.push({
+        level: 3,
+        price: entry + baseTarget * 1.5,
+        percentage: ((entry + baseTarget * 1.5) / entry - 1) * 100,
+        probability: 30,
+      });
+    } else {
+      targets.push({
+        level: 1,
+        price: entry - baseTarget * 0.6,
+        percentage: ((entry - baseTarget * 0.6) / entry - 1) * 100,
+        probability: 70,
+      });
+      targets.push({
+        level: 2,
+        price: entry - baseTarget * 1.0,
+        percentage: ((entry - baseTarget * 1.0) / entry - 1) * 100,
+        probability: 50,
+      });
+      targets.push({
+        level: 3,
+        price: entry - baseTarget * 1.5,
+        percentage: ((entry - baseTarget * 1.5) / entry - 1) * 100,
+        probability: 30,
+      });
+    }
+
+    const riskRewardRatio = Math.abs(targets[1].price - entry) / riskPerShare;
+
+    return {
+      action: signal.action,
+      entry: { price: entry, reasoning: "Current market price" },
+      stopLoss: {
+        price: stopLoss,
+        percentage: ((stopLoss / entry - 1) * 100).toFixed(2),
+      },
+      targets,
+      riskReward: `1:${riskRewardRatio.toFixed(1)}`,
+      confidence: confidence,
+    };
+  }, []); // NO DEPENDENCIES TO PREVENT LOOPS
+
+  // ============================================
+  // MEMOIZED DATA PROCESSING (Proper dependencies)
+  // ============================================
+
+  // Apply all filters to stocks data - STABLE DEPENDENCIES
+  const filteredStocks = useMemo(() => {
+    if (!stocks || stocks.length === 0) return [];
+
+    let filtered = [...stocks];
+
+    // Search filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (stock) =>
+          stock.symbol?.toLowerCase().includes(query) ||
+          stock.company?.toLowerCase().includes(query) ||
+          stock.sector?.toLowerCase().includes(query)
+      );
+    }
+
+    // NISS Score range filter
+    if (activeFilters.nissRange !== "all") {
+      switch (activeFilters.nissRange) {
+        case "strong_buy":
+          filtered = filtered.filter((stock) => (stock.nissScore || 0) > 75);
+          break;
+        case "buy":
+          filtered = filtered.filter(
+            (stock) =>
+              (stock.nissScore || 0) >= 60 && (stock.nissScore || 0) <= 75
+          );
+          break;
+        case "hold":
+          filtered = filtered.filter(
+            (stock) =>
+              (stock.nissScore || 0) > -60 && (stock.nissScore || 0) < 60
+          );
+          break;
+        case "sell":
+          filtered = filtered.filter(
+            (stock) =>
+              (stock.nissScore || 0) >= -75 && (stock.nissScore || 0) <= -60
+          );
+          break;
+        case "strong_sell":
+          filtered = filtered.filter((stock) => (stock.nissScore || 0) < -75);
+          break;
+        default:
+          break;
+      }
+    }
+
+    // Other filters...
+    if (activeFilters.confidence !== "all") {
+      if (activeFilters.confidence === "HIGH_ONLY") {
+        filtered = filtered.filter((stock) => stock.confidence === "HIGH");
+      } else if (activeFilters.confidence === "MEDIUM_PLUS") {
+        filtered = filtered.filter(
+          (stock) =>
+            stock.confidence === "HIGH" || stock.confidence === "MEDIUM"
+        );
+      }
+    }
+
+    return filtered;
+  }, [stocks, searchQuery, activeFilters]); // ONLY ESSENTIAL DEPENDENCIES
+
+  // Sort filtered stocks - FIXED DEPENDENCIES
+  const sortedStocks = useMemo(() => {
+    if (!filteredStocks.length) return [];
+
+    return [...filteredStocks].sort((a, b) => {
+      let aValue, bValue;
+
+      switch (sortConfig.field) {
+        case "nissScore":
+          aValue = a.nissScore || 0;
+          bValue = b.nissScore || 0;
+          break;
+        case "confidence":
+          const confMap = { HIGH: 3, MEDIUM: 2, LOW: 1 };
+          aValue = confMap[a.confidence] || 0;
+          bValue = confMap[b.confidence] || 0;
+          break;
+        case "price":
+          aValue = a.currentPrice || 0;
+          bValue = b.currentPrice || 0;
+          break;
+        case "volume":
+          aValue = a.volumeData?.relativeVolume || 0;
+          bValue = b.volumeData?.relativeVolume || 0;
+          break;
+        case "marketCap":
+          aValue = a.marketCap || 0;
+          bValue = b.marketCap || 0;
+          break;
+        case "change":
+          aValue = a.priceData?.change || 0;
+          bValue = b.priceData?.change || 0;
+          break;
+        default:
+          aValue = a[sortConfig.field] || 0;
+          bValue = b[sortConfig.field] || 0;
       }
 
-      setSortBy(field);
-      setSortDirection(newDirection);
+      if (sortConfig.direction === "asc") {
+        return aValue > bValue ? 1 : -1;
+      } else {
+        return aValue < bValue ? 1 : -1;
+      }
+    });
+  }, [filteredStocks, sortConfig]); // ONLY ESSENTIAL DEPENDENCIES
 
-      // Track sort history
-      setSortHistory((prev) => [
-        { field, direction: newDirection, timestamp: Date.now() },
-        ...prev.slice(0, 4), // Keep last 5 sorts
-      ]);
-    },
-    [sortBy, sortDirection, setSortBy, setSortDirection]
-  );
+  // FIXED: Quick stats calculation WITHOUT calling expensive functions
+  const quickStats = useMemo(() => {
+    if (!sortedStocks?.length) {
+      return {
+        strongBuys: 0,
+        buys: 0,
+        sells: 0,
+        highConfidence: 0,
+        avgNiss: "0",
+      };
+    }
 
-  // Handle row selection
+    try {
+      let strongBuys = 0,
+        buys = 0,
+        sells = 0,
+        highConfidence = 0,
+        totalNiss = 0;
+
+      // FIXED: Calculate signals directly without function calls
+      for (const stock of sortedStocks) {
+        const nissScore = stock.nissScore || 0;
+        const confidence = stock.confidence || "LOW";
+        const relativeVolume = stock.volumeData?.relativeVolume || 1;
+        const priceChange = stock.priceData?.change || 0;
+
+        // Direct signal calculation (no function calls)
+        if (
+          nissScore > 75 &&
+          confidence === "HIGH" &&
+          relativeVolume > 2 &&
+          priceChange > 0
+        ) {
+          strongBuys++;
+        } else if (
+          nissScore >= 60 &&
+          confidence !== "LOW" &&
+          relativeVolume > 1.5
+        ) {
+          buys++;
+        } else if (
+          (nissScore < -75 &&
+            confidence === "HIGH" &&
+            relativeVolume > 2 &&
+            priceChange < 0) ||
+          (nissScore <= -60 && confidence !== "LOW" && relativeVolume > 1.5)
+        ) {
+          sells++;
+        }
+
+        if (confidence === "HIGH") highConfidence++;
+        totalNiss += nissScore;
+      }
+
+      return {
+        strongBuys,
+        buys,
+        sells,
+        highConfidence,
+        avgNiss: (totalNiss / sortedStocks.length).toFixed(1),
+      };
+    } catch (error) {
+      console.error("QuickStats calculation error:", error);
+      return {
+        strongBuys: 0,
+        buys: 0,
+        sells: 0,
+        highConfidence: 0,
+        avgNiss: "0",
+      };
+    }
+  }, [sortedStocks]); // ONLY depends on sortedStocks
+
+  // ============================================
+  // STABLE EVENT HANDLERS (No circular dependencies)
+  // ============================================
+
+  // Handle filter changes - STABLE
+  const handleFilterChange = useCallback((filterKey, value) => {
+    setActiveFilters((prev) => ({
+      ...prev,
+      [filterKey]: value,
+    }));
+  }, []); // NO DEPENDENCIES
+
+  // Handle sorting - STABLE
+  const handleSort = useCallback((field) => {
+    setSortConfig((prev) => ({
+      field,
+      direction:
+        prev.field === field && prev.direction === "desc" ? "asc" : "desc",
+    }));
+  }, []); // NO DEPENDENCIES
+
+  // Handle row selection - STABLE
   const handleRowSelection = useCallback((symbol, isSelected) => {
-    setSelectedRows((prev) => {
+    setSelectedStocks((prev) => {
       const newSet = new Set(prev);
       if (isSelected) {
         newSet.add(symbol);
@@ -134,165 +550,182 @@ const StockScreener = ({
       }
       return newSet;
     });
-  }, []);
+  }, []); // NO DEPENDENCIES
 
-  // Handle bulk operations
+  // Handle bulk watchlist add - ONLY ESSENTIAL DEPENDENCIES
   const handleBulkWatchlistAdd = useCallback(() => {
-    selectedRows.forEach((symbol) => {
-      if (!watchlist.includes(symbol)) {
+    selectedStocks.forEach((symbol) => {
+      if (!watchlist.includes(symbol) && onWatchlistToggle) {
         onWatchlistToggle(symbol);
       }
     });
-    setSelectedRows(new Set());
-  }, [selectedRows, watchlist, onWatchlistToggle]);
+    setSelectedStocks(new Set());
+  }, [selectedStocks, watchlist, onWatchlistToggle]); // MINIMAL DEPENDENCIES
 
-  // Toggle row details
-  const toggleRowDetails = useCallback((symbol) => {
-    setShowDetails((prev) => ({
-      ...prev,
-      [symbol]: !prev[symbol],
-    }));
-  }, []);
+  // Toggle details expansion - STABLE
+  const toggleDetails = useCallback((symbol) => {
+    setExpandedDetails((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(symbol)) {
+        newSet.delete(symbol);
+      } else {
+        newSet.add(symbol);
+      }
+      return newSet;
+    });
+  }, []); // NO DEPENDENCIES
 
-  // SECTION 2: ENHANCED HEADER & CONTROL COMPONENTS
+  // Clear all filters - STABLE
+  const clearAllFilters = useCallback(() => {
+    setActiveFilters({
+      nissRange: "all",
+      confidence: "all",
+      marketCap: "all",
+      sector: "all",
+      volume: "all",
+      timeframe: "24h",
+    });
+    if (setSearchQuery) {
+      setSearchQuery("");
+    }
+    setSelectedStocks(new Set());
+  }, [setSearchQuery]); // MINIMAL DEPENDENCIES
 
-  // Enhanced header with comprehensive status
+  // ============================================
+  // RENDER FUNCTIONS
+  // ============================================
+
+  // Sort icon component
+  const SortIcon = ({ field }) => {
+    if (sortConfig.field !== field) {
+      return <ArrowUpDown className="h-4 w-4 text-gray-400" />;
+    }
+    return sortConfig.direction === "desc" ? (
+      <ArrowDown className="h-4 w-4 text-blue-600" />
+    ) : (
+      <ArrowUp className="h-4 w-4 text-blue-600" />
+    );
+  };
+
+  // Enhanced header
   const renderEnhancedHeader = () => (
     <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-t-lg p-6 border-b border-gray-200">
       <div className="flex justify-between items-start mb-6">
-        {/* Enhanced Status Indicators */}
         <div className="flex items-center space-x-6">
-          {/* Action Buttons */}
-          <div className="flex items-center space-x-3">
-            {onRefresh && (
-              <button
-                onClick={onRefresh}
-                disabled={loading || refreshing}
-                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center"
+          {/* Market Regime Indicator */}
+          <div className="flex items-center space-x-2">
+            <Activity className="h-5 w-5 text-blue-600" />
+            <div>
+              <div className="text-sm font-medium text-gray-900">
+                Market Regime
+              </div>
+              <div
+                className={`text-xs ${
+                  marketRegime.trend === "BULLISH"
+                    ? "text-green-600"
+                    : marketRegime.trend === "BEARISH"
+                    ? "text-red-600"
+                    : "text-gray-600"
+                }`}
               >
-                <RefreshCw
-                  className={`h-4 w-4 mr-2 ${
-                    loading || refreshing ? "animate-spin" : ""
-                  }`}
-                />
-                {loading
-                  ? "Screening..."
-                  : refreshing
-                  ? "Updating..."
-                  : "Refresh"}
-              </button>
-            )}
-
-            {onExportData && (
-              <button
-                onClick={() => onExportData("csv")}
-                disabled={exportInProgress || stocks.length === 0}
-                className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50 flex items-center"
-              >
-                <Download
-                  className={`h-4 w-4 mr-2 ${
-                    exportInProgress ? "animate-bounce" : ""
-                  }`}
-                />
-                {exportInProgress ? "Exporting..." : "Export"}
-              </button>
-            )}
+                {marketRegime.trend || "NEUTRAL"} • VIX:{" "}
+                {marketRegime.vix || "N/A"}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
 
-      {/* Enhanced Summary Statistics */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-        <div className="bg-white rounded-lg p-3 shadow-sm">
-          <div className="text-2xl font-bold text-blue-600">
-            {summaryStats.total || stocks.length}
+          {/* Results Summary */}
+          <div className="flex items-center space-x-2">
+            <BarChart3 className="h-5 w-5 text-indigo-600" />
+            <div>
+              <div className="text-sm font-medium text-gray-900">
+                {filteredStocks.length} of {totalResults} stocks
+              </div>
+              <div className="text-xs text-gray-500">
+                {selectedStocks.size > 0 && `${selectedStocks.size} selected`}
+              </div>
+            </div>
           </div>
-          <div className="text-sm text-gray-600">Total Results</div>
-          <div className="text-xs text-gray-500 mt-1">
-            of {totalResults} screened
+
+          {/* Signal Distribution */}
+          <div className="flex items-center space-x-2">
+            <Target className="h-5 w-5 text-green-600" />
+            <div>
+              <div className="text-sm font-medium text-gray-900">Signals</div>
+              <div className="text-xs text-gray-500">
+                {quickStats.buys} Buy • {quickStats.sells} Sell
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-lg p-3 shadow-sm">
-          <div className="text-2xl font-bold text-green-600">
-            {summaryStats.bullish || 0}
-          </div>
-          <div className="text-sm text-gray-600">Bullish Signals</div>
-          <div className="text-xs text-gray-500 mt-1">
-            {totalResults > 0
-              ? (((summaryStats.bullish || 0) / totalResults) * 100).toFixed(1)
-              : 0}
-            % of total
-          </div>
-        </div>
+        {/* Action Buttons */}
+        <div className="flex items-center space-x-3">
+          {selectedStocks.size > 0 && (
+            <button
+              onClick={handleBulkWatchlistAdd}
+              className="bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm flex items-center"
+            >
+              <Star className="h-4 w-4 mr-1" />
+              Add to Watchlist ({selectedStocks.size})
+            </button>
+          )}
 
-        <div className="bg-white rounded-lg p-3 shadow-sm">
-          <div className="text-2xl font-bold text-red-600">
-            {summaryStats.bearish || 0}
-          </div>
-          <div className="text-sm text-gray-600">Bearish Signals</div>
-          <div className="text-xs text-gray-500 mt-1">
-            {totalResults > 0
-              ? (((summaryStats.bearish || 0) / totalResults) * 100).toFixed(1)
-              : 0}
-            % of total
-          </div>
-        </div>
+          {onRefresh && (
+            <button
+              onClick={onRefresh}
+              disabled={loading || refreshing}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center"
+            >
+              <RefreshCw
+                className={`h-4 w-4 mr-2 ${
+                  loading || refreshing ? "animate-spin" : ""
+                }`}
+              />
+              {loading
+                ? "Screening..."
+                : refreshing
+                ? "Updating..."
+                : "Refresh"}
+            </button>
+          )}
 
-        <div className="bg-white rounded-lg p-3 shadow-sm">
-          <div className="text-2xl font-bold text-purple-600">
-            {summaryStats.highConfidence || 0}
-          </div>
-          <div className="text-sm text-gray-600">High Confidence</div>
-          <div className="text-xs text-gray-500 mt-1">
-            Premium opportunities
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg p-3 shadow-sm">
-          <div className="text-2xl font-bold text-orange-600">
-            {summaryStats.activeSignals || 0}
-          </div>
-          <div className="text-sm text-gray-600">Active Signals</div>
-          <div className="text-xs text-gray-500 mt-1">Actionable trades</div>
-        </div>
-
-        <div className="bg-white rounded-lg p-3 shadow-sm">
-          <div className="text-2xl font-bold text-indigo-600">
-            {(summaryStats.avgNISS || 0).toFixed(1)}
-          </div>
-          <div className="text-sm text-gray-600">Avg NISS Score</div>
-          <div className="text-xs text-gray-500 mt-1">Market sentiment</div>
-        </div>
-
-        <div className="bg-white rounded-lg p-3 shadow-sm">
-          <div className="text-2xl font-bold text-teal-600">
-            {summaryStats.withNews || 0}
-          </div>
-          <div className="text-sm text-gray-600">With News</div>
-          <div className="text-xs text-gray-500 mt-1">Catalyst driven</div>
+          {onExportData && (
+            <button
+              onClick={() => onExportData("csv")}
+              disabled={exportInProgress || sortedStocks.length === 0}
+              className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50 flex items-center"
+            >
+              <Download
+                className={`h-4 w-4 mr-2 ${
+                  exportInProgress ? "animate-bounce" : ""
+                }`}
+              />
+              {exportInProgress ? "Exporting..." : "Export"}
+            </button>
+          )}
         </div>
       </div>
     </div>
   );
 
-  // Enhanced search and filter controls
-  const renderSearchAndFilters = () => (
-    <div className="bg-white p-6 border-b border-gray-200">
+  // Filter controls
+  const renderFilterControls = () => (
+    <div className="bg-white p-4 border-b border-gray-200">
       {/* Search Bar */}
       <div className="mb-4">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
           <input
             type="text"
-            placeholder="Search by symbol, company name, or sector..."
+            placeholder="Search by symbol, company, or sector..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => setSearchQuery?.(e.target.value)}
             className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
           {searchQuery && (
             <button
-              onClick={() => setSearchQuery("")}
+              onClick={() => setSearchQuery?.("")}
               className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
             >
               ×
@@ -301,18 +734,65 @@ const StockScreener = ({
         </div>
       </div>
 
-      {/* Filter Controls */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-4">
-        {/* Sector Filter */}
+      {/* Primary Filters */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            NISS Range
+          </label>
+          <select
+            value={activeFilters.nissRange}
+            onChange={(e) => handleFilterChange("nissRange", e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+          >
+            <option value="all">All Ranges</option>
+            <option value="strong_buy">Strong Buy (&gt;75)</option>
+            <option value="buy">Buy (60-75)</option>
+            <option value="hold">Hold (-60 to 60)</option>
+            <option value="sell">Sell (-75 to -60)</option>
+            <option value="strong_sell">Strong Sell (&lt;-75)</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Confidence
+          </label>
+          <select
+            value={activeFilters.confidence}
+            onChange={(e) => handleFilterChange("confidence", e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+          >
+            <option value="all">All Levels</option>
+            <option value="HIGH_ONLY">HIGH Only</option>
+            <option value="MEDIUM_PLUS">MEDIUM+</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Market Cap
+          </label>
+          <select
+            value={activeFilters.marketCap}
+            onChange={(e) => handleFilterChange("marketCap", e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+          >
+            <option value="all">All Caps</option>
+            <option value="mega">Mega (&gt;$200B)</option>
+            <option value="large">Large ($10B-$200B)</option>
+            <option value="mid">Mid ($2B-$10B)</option>
+            <option value="small">Small (&lt;$2B)</option>
+          </select>
+        </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Sector
           </label>
           <select
-            value={localFilters.sector || "all"}
-            onChange={(e) =>
-              handleLocalFilterChange({ sector: e.target.value })
-            }
+            value={activeFilters.sector}
+            onChange={(e) => handleFilterChange("sector", e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
           >
             <option value="all">All Sectors</option>
@@ -324,462 +804,201 @@ const StockScreener = ({
           </select>
         </div>
 
-        {/* Market Cap Filter */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Market Cap
+            Volume Surge
           </label>
           <select
-            value={localFilters.marketCap || "all"}
-            onChange={(e) =>
-              handleLocalFilterChange({ marketCap: e.target.value })
-            }
+            value={activeFilters.volume}
+            onChange={(e) => handleFilterChange("volume", e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
           >
-            <option value="all">All Caps</option>
-            <option value="mega">Mega Cap (&gt; $200B)</option>
-            <option value="large">Large Cap ($10B-$200B)</option>
-            <option value="mid">Mid Cap ($2B-$10B)</option>
-            <option value="small">Small Cap (&lt; $2B)</option>
+            <option value="all">Any Volume</option>
+            <option value="1.5x">&gt;1.5x Average</option>
+            <option value="2x">&gt;2x Average</option>
+            <option value="3x">&gt;3x Average</option>
           </select>
         </div>
 
-        {/* NISS Threshold Filter */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Min NISS Score: {localFilters.nissThreshold || 0}
-          </label>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={localFilters.nissThreshold || 0}
-            onChange={(e) =>
-              handleLocalFilterChange({
-                nissThreshold: parseInt(e.target.value),
-              })
-            }
-            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-          />
-        </div>
-
-        {/* Confidence Filter */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Min Confidence
+            News Recency
           </label>
           <select
-            value={localFilters.minConfidence || "all"}
-            onChange={(e) =>
-              handleLocalFilterChange({ minConfidence: e.target.value })
-            }
+            value={activeFilters.timeframe}
+            onChange={(e) => handleFilterChange("timeframe", e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
           >
-            <option value="all">All Levels</option>
-            <option value="HIGH">High Only</option>
-            <option value="MEDIUM">Medium & High</option>
-            <option value="LOW">All Levels</option>
+            <option value="1h">Last Hour</option>
+            <option value="4h">Last 4 Hours</option>
+            <option value="24h">Last 24 Hours</option>
+            <option value="7d">Last 7 Days</option>
+            <option value="all">All Time</option>
           </select>
-        </div>
-
-        {/* Signal Type Filter */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Signal Type
-          </label>
-          <select
-            value={localFilters.signalType || "all"}
-            onChange={(e) =>
-              handleLocalFilterChange({ signalType: e.target.value })
-            }
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-          >
-            <option value="all">All Signals</option>
-            <option value="BUY">Buy Signals</option>
-            <option value="SELL">Sell Signals</option>
-            <option value="HOLD">Hold/Neutral</option>
-          </select>
-        </div>
-
-        {/* News Filter */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            News Filter
-          </label>
-          <label className="flex items-center">
-            <input
-              type="checkbox"
-              checked={localFilters.showOnlyWithNews || false}
-              onChange={(e) =>
-                handleLocalFilterChange({ showOnlyWithNews: e.target.checked })
-              }
-              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-            />
-            <span className="ml-2 text-sm text-gray-700">Only with news</span>
-          </label>
         </div>
       </div>
 
-      {/* Advanced Filters Toggle */}
+      {/* Filter Actions */}
       <div className="flex items-center justify-between">
-        <button
-          onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-          className="flex items-center text-sm text-blue-600 hover:text-blue-700"
-        >
-          <Filter className="h-4 w-4 mr-1" />
-          {showAdvancedFilters ? "Hide" : "Show"} Advanced Filters
-        </button>
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+            className="flex items-center text-sm text-blue-600 hover:text-blue-700"
+          >
+            <Filter className="h-4 w-4 mr-1" />
+            {showAdvancedFilters ? "Hide" : "Show"} Advanced Filters
+          </button>
 
-        {/* Bulk Actions */}
-        {selectedRows.size > 0 && (
-          <div className="flex items-center space-x-3">
-            <span className="text-sm text-gray-600">
-              {selectedRows.size} selected
+          {Object.values(activeFilters).filter(
+            (v) => v !== "all" && v !== "24h"
+          ).length > 0 && (
+            <span className="text-sm text-gray-500">
+              {
+                Object.values(activeFilters).filter(
+                  (v) => v !== "all" && v !== "24h"
+                ).length
+              }{" "}
+              filters active
             </span>
-            <button
-              onClick={handleBulkWatchlistAdd}
-              className="text-sm bg-blue-100 text-blue-700 px-3 py-1 rounded-lg hover:bg-blue-200"
-            >
-              Add to Watchlist
-            </button>
-            <button
-              onClick={() => setSelectedRows(new Set())}
-              className="text-sm text-gray-600 hover:text-gray-700"
-            >
-              Clear Selection
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Advanced Filters Panel */}
-      {showAdvancedFilters && (
-        <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {/* Volume Filter */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Min Volume (millions)
-              </label>
-              <input
-                type="number"
-                placeholder="0.5"
-                value={
-                  localFilters.minVolume ? localFilters.minVolume / 1000000 : ""
-                }
-                onChange={(e) =>
-                  handleLocalFilterChange({
-                    minVolume: e.target.value
-                      ? parseFloat(e.target.value) * 1000000
-                      : null,
-                  })
-                }
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
-              />
-            </div>
-
-            {/* Price Range Filters */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Min Price ($)
-              </label>
-              <input
-                type="number"
-                placeholder="1"
-                value={localFilters.minPrice || ""}
-                onChange={(e) =>
-                  handleLocalFilterChange({
-                    minPrice: e.target.value
-                      ? parseFloat(e.target.value)
-                      : null,
-                  })
-                }
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Max Price ($)
-              </label>
-              <input
-                type="number"
-                placeholder="1000"
-                value={localFilters.maxPrice || ""}
-                onChange={(e) =>
-                  handleLocalFilterChange({
-                    maxPrice: e.target.value
-                      ? parseFloat(e.target.value)
-                      : null,
-                  })
-                }
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
-              />
-            </div>
-
-            {/* News Timeframe Filter */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                News Timeframe
-              </label>
-              <select
-                value={localFilters.timeframe || "1d"}
-                onChange={(e) =>
-                  handleLocalFilterChange({ timeframe: e.target.value })
-                }
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
-              >
-                <option value="1d">Last 24 hours</option>
-                <option value="1w">Last week</option>
-                <option value="1m">Last month</option>
-              </select>
-            </div>
-          </div>
+          )}
         </div>
-      )}
+
+        <button
+          onClick={clearAllFilters}
+          className="text-sm text-gray-600 hover:text-gray-800"
+        >
+          Clear All Filters
+        </button>
+      </div>
     </div>
   );
 
-  // SECTION 3: TABLE HEADER & SORTING COMPONENTS
-
-  // Sortable table header component
-  const SortableHeader = ({ field, children, className = "" }) => {
-    const isActive = sortBy === field;
-    const isAsc = sortDirection === "asc";
-
-    return (
-      <th
-        className={`px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors ${className}`}
-        onClick={() => handleSort(field)}
-      >
-        <div className="flex items-center space-x-1">
-          <span>{children}</span>
-          <div className="flex flex-col">
-            {isActive ? (
-              isAsc ? (
-                <ArrowUp className="h-3 w-3 text-blue-600" />
-              ) : (
-                <ArrowDown className="h-3 w-3 text-blue-600" />
-              )
-            ) : (
-              <ArrowUpDown className="h-3 w-3 text-gray-400" />
-            )}
-          </div>
-        </div>
-      </th>
-    );
-  };
-
-  // Table header with comprehensive sorting options
+  // Table header
   const renderTableHeader = () => (
     <thead className="bg-gray-50">
       <tr>
-        {/* Bulk Selection */}
-        <th className="px-6 py-3 text-left">
+        {/* Selection Column */}
+        <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
           <input
             type="checkbox"
-            checked={selectedRows.size === stocks.length && stocks.length > 0}
+            checked={
+              selectedStocks.size === sortedStocks.length &&
+              sortedStocks.length > 0
+            }
             onChange={(e) => {
               if (e.target.checked) {
-                setSelectedRows(new Set(stocks.map((s) => s.symbol)));
+                setSelectedStocks(new Set(sortedStocks.map((s) => s.symbol)));
               } else {
-                setSelectedRows(new Set());
+                setSelectedStocks(new Set());
               }
             }}
             className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
           />
         </th>
 
-        {/* Symbol & Company */}
-        <SortableHeader field="symbol" className="min-w-[120px]">
-          Symbol
-        </SortableHeader>
+        {/* Stock Info */}
+        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+          <button
+            onClick={() => handleSort("symbol")}
+            className="flex items-center space-x-1 hover:text-gray-700"
+          >
+            <span>Stock</span>
+            <SortIcon field="symbol" />
+          </button>
+        </th>
 
-        {/* NISS Score - Primary sort */}
-        <SortableHeader field="nissScore" className="min-w-[100px]">
-          <div className="flex items-center">
-            <Zap className="h-3 w-3 mr-1" />
-            NISS Score
-          </div>
-        </SortableHeader>
+        {/* NISS Score */}
+        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+          <button
+            onClick={() => handleSort("nissScore")}
+            className="flex items-center space-x-1 hover:text-gray-700"
+          >
+            <span>NISS Score</span>
+            <SortIcon field="nissScore" />
+          </button>
+        </th>
 
         {/* Confidence Level */}
-        <SortableHeader field="confidence" className="min-w-[100px]">
-          Confidence
-        </SortableHeader>
+        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+          <button
+            onClick={() => handleSort("confidence")}
+            className="flex items-center space-x-1 hover:text-gray-700"
+          >
+            <span>Confidence</span>
+            <SortIcon field="confidence" />
+          </button>
+        </th>
+
+        {/* Trade Signal */}
+        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+          Signal
+        </th>
 
         {/* Price & Change */}
-        <SortableHeader field="price" className="min-w-[100px]">
-          <div className="flex items-center">
-            <DollarSign className="h-3 w-3 mr-1" />
-            Price
-          </div>
-        </SortableHeader>
-
-        <SortableHeader field="changePercent" className="min-w-[100px]">
-          Change %
-        </SortableHeader>
+        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+          <button
+            onClick={() => handleSort("price")}
+            className="flex items-center space-x-1 hover:text-gray-700"
+          >
+            <span>Price</span>
+            <SortIcon field="price" />
+          </button>
+        </th>
 
         {/* Volume */}
-        <SortableHeader field="volume" className="min-w-[120px]">
-          <div className="flex items-center">
-            <Volume2 className="h-3 w-3 mr-1" />
-            Volume
-          </div>
-        </SortableHeader>
+        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+          <button
+            onClick={() => handleSort("volume")}
+            className="flex items-center space-x-1 hover:text-gray-700"
+          >
+            <span>Volume</span>
+            <SortIcon field="volume" />
+          </button>
+        </th>
 
-        {/* Trading Signal */}
-        <SortableHeader field="tradeSetup.action" className="min-w-[100px]">
-          Signal
-        </SortableHeader>
+        {/* Trade Setup */}
+        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+          Trade Setup
+        </th>
 
-        {/* News Count */}
-        <SortableHeader field="newsCount" className="min-w-[80px]">
-          News
-        </SortableHeader>
-
-        {/* Sector */}
-        <SortableHeader field="sector" className="min-w-[120px]">
-          Sector
-        </SortableHeader>
+        {/* News Catalyst */}
+        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+          Latest News
+        </th>
 
         {/* Actions */}
-        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[100px]">
+        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
           Actions
         </th>
       </tr>
     </thead>
   );
 
-  // Format large numbers for display
-  const formatLargeNumber = (num) => {
-    if (!num) return "N/A";
-
-    if (num >= 1e9) {
-      return `${(num / 1e9).toFixed(1)}B`;
-    } else if (num >= 1e6) {
-      return `${(num / 1e6).toFixed(1)}M`;
-    } else if (num >= 1e3) {
-      return `${(num / 1e3).toFixed(1)}K`;
-    } else {
-      return num.toLocaleString();
-    }
-  };
-
-  // Format percentage with appropriate styling
-  const formatPercentage = (value, includeSign = true) => {
-    if (value === null || value === undefined) return "N/A";
-
-    const formatted = `${includeSign && value > 0 ? "+" : ""}${value.toFixed(
-      2
-    )}%`;
-    const colorClass =
-      value > 0
-        ? "text-green-600"
-        : value < 0
-        ? "text-red-600"
-        : "text-gray-600";
-
-    return <span className={colorClass}>{formatted}</span>;
-  };
-
-  // Get NISS score styling
-  const getNISSScoreStyle = (score) => {
-    if (!score && score !== 0)
-      return { class: "text-gray-500", bg: "bg-gray-100" };
-
-    const absScore = Math.abs(score);
-
-    if (absScore >= 80) {
-      return score > 0
-        ? { class: "text-green-800 font-bold", bg: "bg-green-200" }
-        : { class: "text-red-800 font-bold", bg: "bg-red-200" };
-    } else if (absScore >= 60) {
-      return score > 0
-        ? { class: "text-green-700", bg: "bg-green-100" }
-        : { class: "text-red-700", bg: "bg-red-100" };
-    } else if (absScore >= 40) {
-      return score > 0
-        ? { class: "text-green-600", bg: "bg-green-50" }
-        : { class: "text-red-600", bg: "bg-red-50" };
-    } else {
-      return { class: "text-gray-600", bg: "bg-gray-50" };
-    }
-  };
-
-  // Get confidence badge styling
-  const getConfidenceBadge = (confidence) => {
-    const styles = {
-      HIGH: "bg-green-100 text-green-800 border-green-200",
-      MEDIUM: "bg-yellow-100 text-yellow-800 border-yellow-200",
-      LOW: "bg-red-100 text-red-800 border-red-200",
-    };
-
-    const style = styles[confidence] || styles.LOW;
-
-    return (
-      <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${style}`}
-      >
-        {confidence || "LOW"}
-      </span>
-    );
-  };
-
-  // Get trading signal badge
-  const getTradingSignalBadge = (tradeSetup) => {
-    if (!tradeSetup || !tradeSetup.action) {
-      return <span className="text-xs text-gray-500">No Signal</span>;
-    }
-
-    const { action, confidence } = tradeSetup;
-
-    const styles = {
-      BUY: "bg-green-100 text-green-800 border-green-200",
-      SELL: "bg-red-100 text-red-800 border-red-200",
-      HOLD: "bg-gray-100 text-gray-800 border-gray-200",
-    };
-
-    const style = styles[action] || styles.HOLD;
-
-    return (
-      <div className="flex flex-col items-center">
-        <span
-          className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium border ${style}`}
-        >
-          {action}
-        </span>
-        {confidence && (
-          <span className="text-xs text-gray-500 mt-1">{confidence}</span>
-        )}
-      </div>
-    );
-  };
-
-  // SECTION 4: TABLE ROWS & DATA DISPLAY COMPONENTS
-
-  // Enhanced table row with comprehensive data display
+  // FIXED: Table row renderer - Calculate signals ONCE per render
   const renderTableRow = (stock, index) => {
-    const isSelected = selectedRows.has(stock.symbol);
+    // Calculate signal and setup ONCE per row render (not in useMemo dependencies)
+    const signal = generateTradeSignal(stock);
+    const tradeSetup = calculateTradeSetup(stock);
+    const isSelected = selectedStocks.has(stock.symbol);
+    const isExpanded = expandedDetails.has(stock.symbol);
     const isInWatchlist = watchlist.includes(stock.symbol);
-    const showDetail = showDetails[stock.symbol];
-    const nissStyle = getNISSScoreStyle(stock.nissScore);
 
     return (
-      <React.Fragment key={stock.symbol}>
+      <React.Fragment key={stock.symbol || index}>
         {/* Main Row */}
         <tr
-          className={`${
-            isSelected
-              ? "bg-blue-50"
-              : index % 2 === 0
-              ? "bg-white"
-              : "bg-gray-50"
-          } hover:bg-blue-50 transition-colors cursor-pointer`}
-          onClick={() => setSelectedStock(stock)}
+          className={`hover:bg-gray-50 transition-colors ${
+            isSelected ? "bg-blue-50" : ""
+          } ${
+            signal.priority === 1
+              ? "border-l-4 border-l-green-500"
+              : signal.priority === 2
+              ? "border-l-4 border-l-blue-500"
+              : ""
+          }`}
         >
           {/* Selection Checkbox */}
-          <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+          <td className="px-3 py-4 whitespace-nowrap">
             <input
               type="checkbox"
               checked={isSelected}
@@ -790,170 +1009,171 @@ const StockScreener = ({
             />
           </td>
 
-          {/* Symbol & Company */}
-          <td className="px-6 py-4">
+          {/* Stock Info */}
+          <td className="px-6 py-4 whitespace-nowrap">
             <div className="flex items-center">
               <div>
                 <div className="flex items-center space-x-2">
-                  <span className="text-sm font-bold text-gray-900">
+                  <div className="text-sm font-medium text-gray-900">
                     {stock.symbol}
-                  </span>
+                  </div>
                   {isInWatchlist && (
                     <Star className="h-4 w-4 text-yellow-500 fill-current" />
                   )}
                 </div>
-                <div
-                  className="text-sm text-gray-500 truncate max-w-[120px]"
-                  title={stock.company}
-                >
-                  {stock.company || stock.symbol}
+                <div className="text-sm text-gray-500 truncate max-w-32">
+                  {stock.company || stock.name}
                 </div>
-                {stock.lastUpdate && (
-                  <div className="text-xs text-gray-400">
-                    {new Date(stock.lastUpdate).toLocaleTimeString()}
-                  </div>
-                )}
+                <div className="text-xs text-gray-400">{stock.sector}</div>
               </div>
             </div>
           </td>
 
           {/* NISS Score */}
-          <td className="px-6 py-4">
-            <div className="flex items-center">
-              <span
-                className={`px-3 py-1 rounded-full text-sm font-medium ${nissStyle.bg} ${nissStyle.class}`}
+          <td className="px-6 py-4 whitespace-nowrap">
+            <div className="text-center">
+              <div
+                className={`text-lg font-bold ${getNissScoreColor(
+                  stock.nissScore
+                )}`}
               >
-                {stock.nissScore !== null && stock.nissScore !== undefined
-                  ? stock.nissScore.toFixed(1)
-                  : "N/A"}
+                {stock.nissScore?.toFixed(1) || "N/A"}
+              </div>
+              <div className="text-xs text-gray-500">
+                {(stock.nissScore || 0) > 0
+                  ? "Bullish"
+                  : (stock.nissScore || 0) < 0
+                  ? "Bearish"
+                  : "Neutral"}
+              </div>
+            </div>
+          </td>
+
+          {/* Confidence Badge */}
+          <td className="px-6 py-4 whitespace-nowrap">
+            <span
+              className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full border ${getConfidenceBadge(
+                stock.confidence
+              )}`}
+            >
+              {stock.confidence || "N/A"}
+            </span>
+          </td>
+
+          {/* Trade Signal */}
+          <td className="px-6 py-4 whitespace-nowrap">
+            <div className="text-center">
+              <span
+                className={`inline-flex px-3 py-1 text-xs font-bold rounded-full ${signal.color} ${signal.textColor}`}
+              >
+                {signal.action}
               </span>
-              {stock.nissScore && (
-                <div className="ml-2">
-                  {stock.nissScore > 0 ? (
-                    <TrendingUp className="h-4 w-4 text-green-600" />
-                  ) : (
-                    <TrendingDown className="h-4 w-4 text-red-600" />
-                  )}
+              {signal.priority === 1 && (
+                <div className="flex items-center justify-center mt-1">
+                  <Zap className="h-3 w-3 text-yellow-500" />
+                  <span className="text-xs text-yellow-600 ml-1">Priority</span>
                 </div>
               )}
             </div>
-            {stock.nissData?.riskMetrics && (
-              <div className="text-xs text-gray-500 mt-1">
-                Risk: {stock.nissData.riskMetrics.level}
-              </div>
-            )}
           </td>
 
-          {/* Confidence Level */}
-          <td className="px-6 py-4">
-            {getConfidenceBadge(stock.nissData?.confidence)}
-            {stock.nissData?.components && (
-              <div className="text-xs text-gray-500 mt-1">
-                {Object.keys(stock.nissData.components).length} factors
+          {/* Price & Change */}
+          <td className="px-6 py-4 whitespace-nowrap">
+            <div className="text-right">
+              <div className="text-sm font-medium text-gray-900">
+                {formatCurrency(stock.currentPrice)}
               </div>
-            )}
-          </td>
-
-          {/* Price */}
-          <td className="px-6 py-4">
-            <div className="text-sm font-medium text-gray-900">
-              ${(stock.price || stock.quote?.price || 0).toFixed(2)}
+              <div
+                className={`text-sm ${
+                  (stock.priceData?.change || 0) > 0
+                    ? "text-green-600"
+                    : (stock.priceData?.change || 0) < 0
+                    ? "text-red-600"
+                    : "text-gray-500"
+                }`}
+              >
+                {formatPercentage(stock.priceData?.changePercent)}
+              </div>
+              <div className="text-xs text-gray-500">
+                {formatMarketCap(stock.marketCap)}
+              </div>
             </div>
-            {stock.quote?.high && stock.quote?.low && (
-              <div className="text-xs text-gray-500">
-                ${stock.quote.low.toFixed(2)} - ${stock.quote.high.toFixed(2)}
-              </div>
-            )}
-          </td>
-
-          {/* Change Percentage */}
-          <td className="px-6 py-4">
-            {formatPercentage(
-              stock.changePercent || stock.quote?.changePercent || 0
-            )}
-            {stock.quote?.previousClose && (
-              <div className="text-xs text-gray-500">
-                Prev: ${stock.quote.previousClose.toFixed(2)}
-              </div>
-            )}
           </td>
 
           {/* Volume */}
-          <td className="px-6 py-4">
-            <div className="text-sm text-gray-900">
-              {formatLargeNumber(stock.volume || stock.quote?.volume)}
-            </div>
-            {stock.quote?.avgVolume && (
+          <td className="px-6 py-4 whitespace-nowrap">
+            <div className="text-right">
+              <div className="text-sm font-medium text-gray-900">
+                {stock.volumeData?.relativeVolume?.toFixed(1) || "N/A"}x
+              </div>
               <div className="text-xs text-gray-500">
-                Avg: {formatLargeNumber(stock.quote.avgVolume)}
-                {stock.volume && stock.quote.avgVolume && (
-                  <span
-                    className={`ml-1 ${
-                      stock.volume > stock.quote.avgVolume * 1.5
-                        ? "text-green-600"
-                        : stock.volume < stock.quote.avgVolume * 0.5
-                        ? "text-red-600"
-                        : "text-gray-500"
-                    }`}
-                  >
-                    ({((stock.volume / stock.quote.avgVolume) * 100).toFixed(0)}
-                    %)
-                  </span>
-                )}
+                {stock.volumeData?.volume
+                  ? `${(stock.volumeData.volume / 1000000).toFixed(1)}M`
+                  : "N/A"}
               </div>
-            )}
-          </td>
-
-          {/* Trading Signal */}
-          <td className="px-6 py-4">
-            {getTradingSignalBadge(stock.tradeSetup)}
-            {stock.tradeSetup?.entryPrice && (
-              <div className="text-xs text-gray-500 mt-1">
-                Entry: ${stock.tradeSetup.entryPrice}
-              </div>
-            )}
-          </td>
-
-          {/* News Count */}
-          <td className="px-6 py-4">
-            <div className="flex items-center">
-              <span className="text-sm text-gray-900">
-                {stock.news?.length || 0}
-              </span>
-              {(stock.news?.length || 0) > 0 && (
-                <div className="ml-2">
-                  <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+              {(stock.volumeData?.relativeVolume || 0) > 2 && (
+                <div className="flex items-center justify-end mt-1">
+                  <Volume2 className="h-3 w-3 text-orange-500" />
+                  <span className="text-xs text-orange-600 ml-1">High</span>
                 </div>
               )}
             </div>
-            {stock.news?.length > 0 && (
-              <div className="text-xs text-gray-500">
-                Latest:{" "}
-                {new Date(
-                  stock.news[0]?.datetime * 1000 || Date.now()
-                ).toLocaleDateString()}
+          </td>
+
+          {/* Trade Setup Preview */}
+          <td className="px-6 py-4 whitespace-nowrap">
+            {tradeSetup.action !== "HOLD" ? (
+              <div className="text-right">
+                <div className="text-sm font-medium text-gray-900">
+                  {tradeSetup.riskReward}
+                </div>
+                <div className="text-xs text-gray-500">
+                  Entry: {formatCurrency(tradeSetup.entry?.price)}
+                </div>
+                <div className="text-xs text-gray-500">
+                  Stop: {formatCurrency(tradeSetup.stopLoss?.price)}
+                </div>
+                <div className="text-xs text-green-600">
+                  T1: {formatCurrency(tradeSetup.targets?.[0]?.price)}
+                </div>
               </div>
+            ) : (
+              <div className="text-center text-sm text-gray-400">No Setup</div>
             )}
           </td>
 
-          {/* Sector */}
+          {/* Latest News */}
           <td className="px-6 py-4">
-            <span className="text-sm text-gray-900">
-              {stock.sector || "N/A"}
-            </span>
-            {stock.marketCap && (
-              <div className="text-xs text-gray-500">{stock.marketCap}</div>
-            )}
+            <div className="max-w-48">
+              {stock.latestNews ? (
+                <div>
+                  <div className="text-sm text-gray-900 truncate">
+                    {stock.latestNews.headline}
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {new Date(stock.latestNews.timestamp).toLocaleTimeString()}
+                  </div>
+                  {stock.latestNews.source && (
+                    <div className="text-xs text-blue-600">
+                      {stock.latestNews.source}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-400">No recent news</div>
+              )}
+            </div>
           </td>
 
           {/* Actions */}
-          <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
             <div className="flex items-center space-x-2">
-              {/* Watchlist Toggle */}
               <button
-                onClick={() => onWatchlistToggle(stock.symbol)}
-                className={`p-1 rounded hover:bg-gray-100 ${
-                  isInWatchlist ? "text-yellow-500" : "text-gray-400"
+                onClick={() => onWatchlistToggle?.(stock.symbol)}
+                className={`p-1 rounded ${
+                  isInWatchlist
+                    ? "text-yellow-500 hover:text-yellow-600"
+                    : "text-gray-400 hover:text-yellow-500"
                 }`}
                 title={
                   isInWatchlist ? "Remove from watchlist" : "Add to watchlist"
@@ -966,199 +1186,142 @@ const StockScreener = ({
                 )}
               </button>
 
-              {/* View Details */}
               <button
-                onClick={() => toggleRowDetails(stock.symbol)}
-                className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600"
-                title="Toggle details"
+                onClick={() => toggleDetails(stock.symbol)}
+                className="p-1 text-gray-400 hover:text-blue-600 rounded"
+                title="View details"
               >
                 <Eye className="h-4 w-4" />
               </button>
 
-              {/* External Link (if available) */}
-              {stock.url && (
-                <a
-                  href={stock.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600"
-                  title="View external source"
-                >
-                  <ExternalLink className="h-4 w-4" />
-                </a>
-              )}
+              <button
+                onClick={() => setSelectedStock?.(stock)}
+                className="p-1 text-gray-400 hover:text-green-600 rounded"
+                title="Analyze"
+              >
+                <Target className="h-4 w-4" />
+              </button>
             </div>
           </td>
         </tr>
 
         {/* Expanded Details Row */}
-        {showDetail && (
-          <tr className="bg-blue-50">
-            <td colSpan="11" className="px-6 py-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {/* NISS Analysis Details */}
-                {stock.nissData && (
-                  <div className="bg-white p-4 rounded-lg">
-                    <h4 className="font-semibold text-gray-900 mb-3">
-                      NISS Analysis
-                    </h4>
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span>Sentiment:</span>
-                        <span className="font-medium">
-                          {stock.nissData.avgSentiment?.toFixed(2) || "N/A"}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span>Technical Strength:</span>
-                        <span className="font-medium">
-                          {stock.nissData.technicalStrength?.toFixed(2) ||
-                            "N/A"}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span>News Relevance:</span>
-                        <span className="font-medium">
-                          {stock.nissData.avgRelevance?.toFixed(1) || "N/A"}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span>Market Alignment:</span>
-                        <span className="font-medium">
-                          {stock.nissData.marketAlignment?.toFixed(2) || "N/A"}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Trading Setup Details */}
-                {stock.tradeSetup && stock.tradeSetup.action !== "HOLD" && (
-                  <div className="bg-white p-4 rounded-lg">
-                    <h4 className="font-semibold text-gray-900 mb-3">
-                      Trading Setup
-                    </h4>
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span>Action:</span>
-                        <span className="font-medium">
-                          {stock.tradeSetup.action}
-                        </span>
-                      </div>
-                      {stock.tradeSetup.entryPrice && (
-                        <div className="flex justify-between text-sm">
-                          <span>Entry Price:</span>
-                          <span className="font-medium">
-                            ${stock.tradeSetup.entryPrice}
-                          </span>
-                        </div>
-                      )}
-                      {stock.tradeSetup.stopLoss && (
-                        <div className="flex justify-between text-sm">
-                          <span>Stop Loss:</span>
-                          <span className="font-medium">
-                            ${stock.tradeSetup.stopLoss}
-                          </span>
-                        </div>
-                      )}
-                      {stock.tradeSetup.targets &&
-                        stock.tradeSetup.targets.length > 0 && (
-                          <div className="text-sm">
-                            <span>Targets:</span>
-                            <div className="mt-1 space-y-1">
-                              {stock.tradeSetup.targets.map((target, idx) => (
-                                <div
-                                  key={idx}
-                                  className="flex justify-between text-xs bg-gray-50 px-2 py-1 rounded"
-                                >
-                                  <span>T{target.level}:</span>
-                                  <span>
-                                    ${target.price} (
-                                    {target.probability
-                                      ? `${(target.probability * 100).toFixed(
-                                          0
-                                        )}%`
-                                      : "N/A"}
-                                    )
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      {stock.tradeSetup.riskReward && (
-                        <div className="flex justify-between text-sm">
-                          <span>Risk/Reward:</span>
-                          <span className="font-medium">
-                            1:{stock.tradeSetup.riskReward}
-                          </span>
-                        </div>
-                      )}
-                      <div className="text-xs text-gray-600 mt-2">
-                        {stock.tradeSetup.reasoning}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Recent News */}
-                {stock.news && stock.news.length > 0 && (
-                  <div className="bg-white p-4 rounded-lg">
-                    <h4 className="font-semibold text-gray-900 mb-3">
-                      Recent News ({stock.news.length})
-                    </h4>
-                    <div className="space-y-3 max-h-40 overflow-y-auto">
-                      {stock.news.slice(0, 3).map((newsItem, idx) => (
-                        <div
-                          key={idx}
-                          className="border-b border-gray-100 pb-2 last:border-b-0"
-                        >
-                          <div className="text-sm font-medium text-gray-900 line-clamp-2">
-                            {newsItem.headline || newsItem.title}
-                          </div>
-                          <div className="flex justify-between items-center mt-1">
-                            <span className="text-xs text-gray-500">
-                              {newsItem.source}
+        {isExpanded && (
+          <tr className="bg-gray-50">
+            <td colSpan="10" className="px-6 py-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* NISS Component Breakdown */}
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-3 flex items-center">
+                    <BarChart3 className="h-4 w-4 mr-2" />
+                    NISS Components
+                  </h4>
+                  <div className="space-y-2">
+                    {stock.nissComponents &&
+                      Object.entries(stock.nissComponents).map(
+                        ([key, value]) => (
+                          <div key={key} className="flex justify-between">
+                            <span className="text-sm text-gray-600 capitalize">
+                              {key.replace(/([A-Z])/g, " $1").trim()}:
                             </span>
-                            <span className="text-xs text-gray-500">
-                              {new Date(
-                                (newsItem.datetime || newsItem.publishedAt) *
-                                  1000
-                              ).toLocaleDateString()}
+                            <span
+                              className={`text-sm font-medium ${
+                                (value || 0) > 0
+                                  ? "text-green-600"
+                                  : (value || 0) < 0
+                                  ? "text-red-600"
+                                  : "text-gray-600"
+                              }`}
+                            >
+                              {value?.toFixed(1) || "N/A"}
                             </span>
                           </div>
-                          {newsItem.sentiment !== undefined && (
-                            <div className="flex items-center mt-1">
-                              <span className="text-xs text-gray-500 mr-2">
-                                Sentiment:
-                              </span>
-                              <span
-                                className={`text-xs px-2 py-0.5 rounded ${
-                                  newsItem.sentiment > 0.1
-                                    ? "bg-green-100 text-green-700"
-                                    : newsItem.sentiment < -0.1
-                                    ? "bg-red-100 text-red-700"
-                                    : "bg-gray-100 text-gray-700"
-                                }`}
-                              >
-                                {newsItem.sentiment > 0.1
-                                  ? "Positive"
-                                  : newsItem.sentiment < -0.1
-                                  ? "Negative"
-                                  : "Neutral"}
-                              </span>
-                            </div>
-                          )}
+                        )
+                      )}
+                  </div>
+                </div>
+
+                {/* Complete Trade Setup */}
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-3 flex items-center">
+                    <Target className="h-4 w-4 mr-2" />
+                    Complete Trade Setup
+                  </h4>
+                  {tradeSetup.action !== "HOLD" ? (
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-sm text-gray-600">Entry:</span>
+                        <span className="text-sm font-medium">
+                          {formatCurrency(tradeSetup.entry?.price)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm text-gray-600">
+                          Stop Loss:
+                        </span>
+                        <span className="text-sm font-medium text-red-600">
+                          {formatCurrency(tradeSetup.stopLoss?.price)} (
+                          {tradeSetup.stopLoss?.percentage}%)
+                        </span>
+                      </div>
+                      {tradeSetup.targets?.map((target, idx) => (
+                        <div key={idx} className="flex justify-between">
+                          <span className="text-sm text-gray-600">
+                            Target {target.level}:
+                          </span>
+                          <span className="text-sm font-medium text-green-600">
+                            {formatCurrency(target.price)} (
+                            {target.percentage?.toFixed(1)}%)
+                          </span>
                         </div>
                       ))}
-                      {stock.news.length > 3 && (
-                        <div className="text-xs text-blue-600 text-center">
-                          +{stock.news.length - 3} more articles
+                      <div className="pt-2 border-t border-gray-200">
+                        <div className="flex justify-between">
+                          <span className="text-sm text-gray-600">
+                            Risk:Reward:
+                          </span>
+                          <span className="text-sm font-bold text-blue-600">
+                            {tradeSetup.riskReward}
+                          </span>
                         </div>
-                      )}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <div className="text-sm text-gray-500">
+                      No clear trading setup available
+                    </div>
+                  )}
+                </div>
+
+                {/* Recent News Summary */}
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-3 flex items-center">
+                    <Info className="h-4 w-4 mr-2" />
+                    Recent News Impact
+                  </h4>
+                  {stock.recentNews && stock.recentNews.length > 0 ? (
+                    <div className="space-y-2">
+                      {stock.recentNews.slice(0, 3).map((news, idx) => (
+                        <div
+                          key={idx}
+                          className="border-l-2 border-gray-200 pl-3"
+                        >
+                          <div className="text-sm text-gray-900 line-clamp-2">
+                            {news.headline}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            {news.source} •{" "}
+                            {new Date(news.timestamp).toLocaleString()}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-500">
+                      No recent news available
+                    </div>
+                  )}
+                </div>
               </div>
             </td>
           </tr>
@@ -1167,232 +1330,138 @@ const StockScreener = ({
     );
   };
 
-  // SECTION 5: PAGINATION & MAIN RENDER FUNCTION
-
-  // Enhanced pagination component
-  const renderPagination = () => {
-    if (totalPages <= 1) return null;
-
-    const pageNumbers = [];
-    const maxVisiblePages = 7;
-    let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
-    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
-
-    // Adjust start page if we're near the end
-    if (endPage - startPage + 1 < maxVisiblePages) {
-      startPage = Math.max(1, endPage - maxVisiblePages + 1);
-    }
-
-    for (let i = startPage; i <= endPage; i++) {
-      pageNumbers.push(i);
-    }
-
-    return (
-      <div className="bg-white px-4 py-3 border-t border-gray-200 sm:px-6">
-        <div className="flex items-center justify-between">
-          {/* Results Info */}
-          <div className="flex-1 flex justify-between sm:hidden">
-            <button
-              onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-              disabled={currentPage === 1}
-              className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
-            >
-              Previous
-            </button>
-            <button
-              onClick={() =>
-                setCurrentPage(Math.min(totalPages, currentPage + 1))
-              }
-              disabled={currentPage === totalPages}
-              className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
-            >
-              Next
-            </button>
+  // Quick stats footer
+  const renderQuickStats = () => (
+    <div className="bg-gray-50 px-6 py-4 border-t border-gray-200">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
+        <div>
+          <div className="text-2xl font-bold text-green-600">
+            {quickStats.strongBuys}
           </div>
-
-          <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
-            <div>
-              <p className="text-sm text-gray-700">
-                Showing{" "}
-                <span className="font-medium">
-                  {(currentPage - 1) * resultsPerPage + 1}
-                </span>{" "}
-                to{" "}
-                <span className="font-medium">
-                  {Math.min(currentPage * resultsPerPage, totalResults)}
-                </span>{" "}
-                of <span className="font-medium">{totalResults}</span> results
-              </p>
-            </div>
-
-            <div>
-              <nav
-                className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px"
-                aria-label="Pagination"
-              >
-                {/* Previous Button */}
-                <button
-                  onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                  disabled={currentPage === 1}
-                  className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
-                >
-                  <ChevronLeft className="h-5 w-5" />
-                </button>
-
-                {/* Page Numbers */}
-                {startPage > 1 && (
-                  <>
-                    <button
-                      onClick={() => setCurrentPage(1)}
-                      className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50"
-                    >
-                      1
-                    </button>
-                    {startPage > 2 && (
-                      <span className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
-                        ...
-                      </span>
-                    )}
-                  </>
-                )}
-
-                {pageNumbers.map((page) => (
-                  <button
-                    key={page}
-                    onClick={() => setCurrentPage(page)}
-                    className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
-                      page === currentPage
-                        ? "z-10 bg-blue-50 border-blue-500 text-blue-600"
-                        : "bg-white border-gray-300 text-gray-700 hover:bg-gray-50"
-                    }`}
-                  >
-                    {page}
-                  </button>
-                ))}
-
-                {endPage < totalPages && (
-                  <>
-                    {endPage < totalPages - 1 && (
-                      <span className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
-                        ...
-                      </span>
-                    )}
-                    <button
-                      onClick={() => setCurrentPage(totalPages)}
-                      className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50"
-                    >
-                      {totalPages}
-                    </button>
-                  </>
-                )}
-
-                {/* Next Button */}
-                <button
-                  onClick={() =>
-                    setCurrentPage(Math.min(totalPages, currentPage + 1))
-                  }
-                  disabled={currentPage === totalPages}
-                  className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
-                >
-                  <ChevronRight className="h-5 w-5" />
-                </button>
-              </nav>
-            </div>
-          </div>
+          <div className="text-sm text-gray-600">Strong Buys</div>
         </div>
-      </div>
-    );
-  };
-
-  // Loading state component
-  const renderLoadingState = () => (
-    <div className="bg-white rounded-lg shadow">
-      {renderEnhancedHeader()}
-      {renderSearchAndFilters()}
-      <div className="p-12 text-center">
-        <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4 text-blue-600" />
-        <p className="text-lg font-medium text-gray-900 mb-2">
-          Screening Stocks...
-        </p>
-        <p className="text-gray-600">
-          Analyzing {serviceStatus.totalSymbols || "400+"} symbols with
-          institutional-grade algorithms
-        </p>
+        <div>
+          <div className="text-2xl font-bold text-green-500">
+            {quickStats.buys}
+          </div>
+          <div className="text-sm text-gray-600">Buys</div>
+        </div>
+        <div>
+          <div className="text-2xl font-bold text-red-500">
+            {quickStats.sells}
+          </div>
+          <div className="text-sm text-gray-600">Sells</div>
+        </div>
+        <div>
+          <div className="text-2xl font-bold text-blue-600">
+            {quickStats.highConfidence}
+          </div>
+          <div className="text-sm text-gray-600">High Confidence</div>
+        </div>
+        <div>
+          <div className="text-2xl font-bold text-gray-800">
+            {quickStats.avgNiss}
+          </div>
+          <div className="text-sm text-gray-600">Avg NISS</div>
+        </div>
       </div>
     </div>
   );
 
-  // Empty state component
+  // Loading state
+  const renderLoadingState = () => (
+    <div className="bg-white rounded-lg shadow p-8 text-center">
+      <div className="flex items-center justify-center mb-4">
+        <RefreshCw className="h-8 w-8 animate-spin text-blue-600" />
+      </div>
+      <h3 className="text-lg font-medium text-gray-900 mb-2">
+        Screening Market for Opportunities
+      </h3>
+      <p className="text-gray-500 mb-4">
+        Analyzing {totalResults || "200+"} stocks with Enhanced Trading Cheat
+        Sheet criteria...
+      </p>
+      <div className="bg-gray-200 rounded-full h-2 mb-4">
+        <div
+          className="bg-blue-600 h-2 rounded-full animate-pulse"
+          style={{ width: "65%" }}
+        ></div>
+      </div>
+      <div className="text-sm text-gray-600">
+        This may take up to 30 seconds for full analysis
+      </div>
+    </div>
+  );
+
+  // Empty state
   const renderEmptyState = () => (
-    <div className="bg-white rounded-lg shadow">
-      {renderEnhancedHeader()}
-      {renderSearchAndFilters()}
-      <div className="p-12 text-center">
-        <BarChart3 className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-        <p className="text-lg font-medium text-gray-900 mb-2">
-          No Results Found
-        </p>
-        <p className="text-gray-600 mb-4">
-          Try adjusting your filters or search criteria to find more stocks.
-        </p>
+    <div className="bg-white rounded-lg shadow p-8 text-center">
+      <div className="flex items-center justify-center mb-4">
+        <AlertCircle className="h-12 w-12 text-gray-400" />
+      </div>
+      <h3 className="text-lg font-medium text-gray-900 mb-2">
+        No Stocks Match Current Filters
+      </h3>
+      <p className="text-gray-500 mb-6">
+        Try adjusting your filters to see more opportunities, or refresh data to
+        get latest results.
+      </p>
+      <div className="flex items-center justify-center space-x-3">
         <button
-          onClick={() => {
-            setSearchQuery("");
-            setFilters({
-              marketCap: "all",
-              sector: "all",
-              nissThreshold: 0,
-              minConfidence: "all",
-              minVolume: null,
-              minPrice: null,
-              maxPrice: null,
-              signalType: "all",
-              showOnlyWithNews: false,
-              timeframe: "1d",
-            });
-          }}
+          onClick={clearAllFilters}
           className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
         >
           Clear All Filters
         </button>
+        {onRefresh && (
+          <button
+            onClick={onRefresh}
+            className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors"
+          >
+            Refresh Data
+          </button>
+        )}
       </div>
     </div>
   );
 
+  // ============================================
   // MAIN COMPONENT RENDER
+  // ============================================
+
   return (
     <div className="space-y-6">
       {/* Loading State */}
-      {loading && stocks.length === 0 && renderLoadingState()}
+      {loading && sortedStocks.length === 0 && renderLoadingState()}
 
       {/* Empty State */}
-      {!loading && stocks.length === 0 && renderEmptyState()}
+      {!loading && sortedStocks.length === 0 && renderEmptyState()}
 
       {/* Main Content */}
-      {(stocks.length > 0 || !loading) && (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
+      {(sortedStocks.length > 0 || !loading) && (
+        <div className="bg-white rounded-lg shadow overflow-hidden relative">
           {/* Enhanced Header */}
           {renderEnhancedHeader()}
 
-          {/* Search and Filters */}
-          {renderSearchAndFilters()}
+          {/* Filter Controls */}
+          {renderFilterControls()}
 
           {/* Results Table */}
-          {stocks.length > 0 && (
-            <>
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  {renderTableHeader()}
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {stocks.map((stock, index) => renderTableRow(stock, index))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Pagination */}
-              {renderPagination()}
-            </>
+          {sortedStocks.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                {renderTableHeader()}
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {sortedStocks.map((stock, index) =>
+                    renderTableRow(stock, index)
+                  )}
+                </tbody>
+              </table>
+            </div>
           )}
+
+          {/* Quick Stats Footer */}
+          {sortedStocks.length > 0 && renderQuickStats()}
 
           {/* Loading Overlay for Refresh */}
           {refreshing && (
@@ -1400,7 +1469,7 @@ const StockScreener = ({
               <div className="flex items-center space-x-3">
                 <RefreshCw className="h-6 w-6 animate-spin text-blue-600" />
                 <span className="text-lg font-medium text-gray-900">
-                  Updating data...
+                  Updating screening data...
                 </span>
               </div>
             </div>
@@ -1408,36 +1477,14 @@ const StockScreener = ({
         </div>
       )}
 
-      {/* Quick Stats Footer */}
-      {stocks.length > 0 && (
-        <div className="bg-white rounded-lg shadow p-4">
-          <div className="flex items-center justify-between text-sm text-gray-600">
-            <div className="flex items-center space-x-6">
-              <span>
-                <strong>{summaryStats.total || stocks.length}</strong> results
-                displayed
-              </span>
-              <span>
-                <strong>{summaryStats.activeSignals || 0}</strong> active
-                trading signals
-              </span>
-              <span>
-                <strong>{summaryStats.highConfidence || 0}</strong> high
-                confidence opportunities
-              </span>
-            </div>
-
-            <div className="flex items-center space-x-4">
-              <span className="text-xs text-gray-500">
-                Last updated: {new Date().toLocaleTimeString()}
-              </span>
-              {connectionStatus !== "connected" && (
-                <span className="flex items-center text-yellow-600">
-                  <AlertCircle className="h-4 w-4 mr-1" />
-                  Limited connectivity
-                </span>
-              )}
-            </div>
+      {/* Connection Status Indicator */}
+      {connectionStatus !== "connected" && (
+        <div className="fixed bottom-4 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg shadow-lg">
+          <div className="flex items-center">
+            <AlertCircle className="h-5 w-5 mr-2" />
+            <span className="text-sm font-medium">
+              Connection issues detected. Data may be outdated.
+            </span>
           </div>
         </div>
       )}

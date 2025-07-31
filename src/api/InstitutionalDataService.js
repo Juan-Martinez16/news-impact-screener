@@ -1,628 +1,678 @@
-// src/api/InstitutionalDataService.js - ENHANCED VERSION 3.0
-// Simplified and optimized data service using the new calculation engine
+// src/api/InstitutionalDataService.js - REAL API INTEGRATION
+// Implements real API calls with graceful fallback to mock data
 
-import {
-  API_CONFIG,
-  makeBackendApiCall,
-  checkBackendHealth,
-} from "./config.js";
-import NISSCalculationEngine from "../engine/NISSCalculationEngine.js";
-import DataNormalizer from "../utils/DataNormalizer.js";
+import NISSCalculationEngine from "../engine/NISSCalculationEngine";
+import dataNormalizer from "../utils/DataNormalizer";
 
 class InstitutionalDataService {
   constructor() {
-    this.version = "3.0.0";
-    this.dataService = "Enhanced Institutional";
-
-    // Initialize engines
-    this.nissEngine = NISSCalculationEngine;
-    this.dataNormalizer = DataNormalizer;
-
-    // Enhanced cache management
+    this.version = "3.1.5";
     this.cache = new Map();
+    this.initialized = false;
+    this.backendBaseUrl = process.env.REACT_APP_BACKEND_URL || "";
+
+    // Cache TTL settings (in milliseconds)
     this.cacheTTL = {
-      quotes: 30 * 1000, // 30 seconds
-      news: 5 * 60 * 1000, // 5 minutes
-      technicals: 10 * 60 * 1000, // 10 minutes
-      options: 2 * 60 * 1000, // 2 minutes
+      quotes: 60000, // 1 minute
+      news: 300000, // 5 minutes
+      technicals: 600000, // 10 minutes
+      screening: 180000, // 3 minutes
+      health: 120000, // 2 minutes
     };
 
-    // Backend health tracking
-    this.backendHealth = true;
-    this.lastHealthCheck = Date.now();
-    this.healthCheckInterval = 2 * 60 * 1000; // 2 minutes
+    // API endpoints configuration
+    this.endpoints = {
+      health: "/api/health",
+      quotes: "/api/quotes",
+      technicals: "/api/technicals",
+      screening: "/api/screening",
+      marketContext: "/api/market-context",
+      watchlist: "/api/watchlist",
+    };
 
     // Rate limiting
-    this.requestHistory = [];
-    this.maxRequestsPerMinute = 80;
-
-    // Market context
-    this.marketContext = {
-      volatility: "NORMAL",
-      trend: "NEUTRAL",
-      breadth: "MIXED",
-      lastUpdate: new Date(),
+    this.requestCounts = new Map();
+    this.rateLimits = {
+      alphaVantage: { requests: 0, limit: 5, window: 60000 }, // 5 per minute
+      finnhub: { requests: 0, limit: 60, window: 60000 }, // 60 per minute
+      polygon: { requests: 0, limit: 100, window: 60000 }, // 100 per minute
     };
 
-    // COMPLETE SCREENING UNIVERSE (200+ stocks)
-    this.screeningUniverse = this.buildCompleteUniverse();
-
-    console.log(`🚀 InstitutionalDataService v${this.version} initialized`);
-    console.log(
-      `📊 Universe: ${this.getTotalSymbols()} symbols across ${
-        Object.keys(this.screeningUniverse).length
-      } sectors`
-    );
-
-    // Initialize health monitoring
-    this.initializeHealthMonitoring();
+    this.initialize();
   }
 
-  // ============================================
-  // UNIVERSE MANAGEMENT
-  // ============================================
+  async initialize() {
+    if (this.initialized) return;
 
-  buildCompleteUniverse() {
-    return {
-      // S&P 500 Leaders (31 symbols)
-      megaCap: [
-        "AAPL",
-        "MSFT",
-        "GOOGL",
-        "AMZN",
-        "NVDA",
-        "META",
-        "TSLA",
-        "BRK.B",
-        "JPM",
-        "JNJ",
-        "V",
-        "MA",
-        "PG",
-        "UNH",
-        "HD",
-        "DIS",
-        "BAC",
-        "XOM",
-        "ABBV",
-        "CVX",
-        "LLY",
-        "WMT",
-        "COST",
-        "NFLX",
-        "CRM",
-        "TMO",
-        "ACN",
-        "MCD",
-        "VZ",
-        "ADBE",
-        "PFE",
-      ],
+    try {
+      console.log("🚀 InstitutionalDataService v3.1.5 initializing...");
 
-      // High Growth Tech (30 symbols)
-      growthTech: [
-        "PLTR",
-        "SNOW",
-        "DDOG",
-        "NET",
-        "CRWD",
-        "ZS",
-        "OKTA",
-        "TWLO",
-        "DOCU",
-        "ZM",
-        "ROKU",
-        "SQ",
-        "SHOP",
-        "MELI",
-        "SE",
-        "UBER",
-        "LYFT",
-        "DASH",
-        "ABNB",
-        "RBLX",
-        "COIN",
-        "HOOD",
-        "SOFI",
-        "AFRM",
-        "UPST",
-        "RIVN",
-        "LCID",
-        "U",
-        "DKNG",
-        "PATH",
-      ],
+      // Test backend connectivity
+      await this.checkBackendHealth();
 
-      // Semiconductors (25 symbols)
-      semiconductor: [
-        "AMD",
-        "INTC",
-        "MU",
-        "QCOM",
-        "AVGO",
-        "TXN",
-        "ADI",
-        "MRVL",
-        "KLAC",
-        "AMAT",
-        "LRCX",
-        "ASML",
-        "TSM",
-        "NXPI",
-        "MCHP",
-        "ON",
-        "SWKS",
-        "QRVO",
-        "SMCI",
-        "ARM",
-        "MPWR",
-        "SLAB",
-        "CRUS",
-        "RMBS",
-        "ACLS",
-      ],
+      // Initialize data normalizer
+      if (dataNormalizer && typeof dataNormalizer.initialize === "function") {
+        dataNormalizer.initialize();
+      }
 
-      // Biotech & Healthcare (25 symbols)
-      biotech: [
-        "MRNA",
-        "BNTX",
-        "GILD",
-        "BIIB",
-        "REGN",
-        "VRTX",
-        "ILMN",
-        "ALNY",
-        "BMRN",
-        "INCY",
-        "SGEN",
-        "EXAS",
-        "TECH",
-        "IONS",
-        "NBIX",
-        "VKTX",
-        "SAGE",
-        "SRPT",
-        "RARE",
-        "BLUE",
-        "ARCT",
-        "FOLD",
-        "BEAM",
-        "EDIT",
-        "CRSP",
-      ],
+      // Initialize NISS engine
+      if (
+        NISSCalculationEngine &&
+        typeof NISSCalculationEngine.initialize === "function"
+      ) {
+        NISSCalculationEngine.initialize();
+      }
 
-      // Financial Services (25 symbols)
-      financial: [
-        "BAC",
-        "WFC",
-        "C",
-        "GS",
-        "MS",
-        "USB",
-        "PNC",
-        "TFC",
-        "COF",
-        "SCHW",
-        "PYPL",
-        "SQ",
-        "COIN",
-        "SOFI",
-        "AFRM",
-        "UPST",
-        "LC",
-        "ALLY",
-        "FISV",
-        "FIS",
-        "V",
-        "MA",
-        "AXP",
-        "BLK",
-        "SPGI",
-      ],
-
-      // Energy (20 symbols)
-      energy: [
-        "XOM",
-        "CVX",
-        "COP",
-        "EOG",
-        "SLB",
-        "HAL",
-        "DVN",
-        "MRO",
-        "OKE",
-        "KMI",
-        "PSX",
-        "VLO",
-        "MPC",
-        "PXD",
-        "BKR",
-        "NOV",
-        "FTI",
-        "RIG",
-        "HP",
-        "OII",
-      ],
-
-      // Consumer & Retail (20 symbols)
-      consumer: [
-        "AMZN",
-        "WMT",
-        "COST",
-        "TGT",
-        "HD",
-        "LOW",
-        "NKE",
-        "SBUX",
-        "MCD",
-        "DIS",
-        "PG",
-        "KO",
-        "PEP",
-        "CL",
-        "EL",
-        "UL",
-        "MDLZ",
-        "GIS",
-        "K",
-        "CPB",
-      ],
-
-      // Industrial (20 symbols)
-      industrial: [
-        "BA",
-        "CAT",
-        "GE",
-        "MMM",
-        "HON",
-        "UPS",
-        "FDX",
-        "LMT",
-        "RTX",
-        "NOC",
-        "DE",
-        "EMR",
-        "ETN",
-        "PH",
-        "ITW",
-        "CMI",
-        "ROK",
-        "DOV",
-        "XYL",
-        "CARR",
-      ],
-    };
-  }
-
-  getScreeningUniverse() {
-    return Object.values(this.screeningUniverse).flat();
-  }
-
-  getTotalSymbols() {
-    return this.getScreeningUniverse().length;
-  }
-
-  getUniverseByType(type = "all") {
-    if (type === "all") {
-      return this.getScreeningUniverse();
+      this.initialized = true;
+      console.log("✅ InstitutionalDataService initialized successfully");
+    } catch (error) {
+      console.warn("⚠️ InstitutionalDataService initialization failed:", error);
+      this.initialized = true; // Continue with mock data
     }
-    return this.screeningUniverse[type] || [];
   }
 
   // ============================================
-  // CORE DATA METHODS (Simplified)
+  // REAL BACKEND API METHODS
   // ============================================
 
-  async getQuote(symbol) {
+  async makeApiCall(endpoint, options = {}) {
+    try {
+      const url = this.backendBaseUrl + endpoint;
+      const config = {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Client-Version": this.version,
+        },
+        timeout: 10000, // 10 second timeout
+        ...options,
+      };
+
+      console.log(`📡 API Call: ${config.method} ${url}`);
+      const response = await fetch(url, config);
+
+      if (!response.ok) {
+        throw new Error(
+          `API call failed: ${response.status} ${response.statusText}`
+        );
+      }
+
+      const data = await response.json();
+      console.log(
+        `✅ API Response: ${endpoint} - ${JSON.stringify(data).length} chars`
+      );
+      return data;
+    } catch (error) {
+      console.warn(`❌ API call failed for ${endpoint}:`, error.message);
+      throw error;
+    }
+  }
+
+  async checkBackendHealth() {
+    try {
+      const cacheKey = "backend-health";
+      const cached = this.getFromCache(cacheKey, this.cacheTTL.health);
+      if (cached) return cached;
+
+      const start = Date.now(); // FIXED: Add missing start variable
+      const healthData = await this.makeApiCall(this.endpoints.health);
+
+      const result = {
+        healthy: true,
+        timestamp: new Date().toISOString(),
+        version: healthData.version || "unknown",
+        apiStatus: healthData.apiStatus || {},
+        latency: Date.now() - start,
+      };
+
+      this.setCache(cacheKey, result);
+      return result;
+    } catch (error) {
+      const result = {
+        healthy: false,
+        timestamp: new Date().toISOString(),
+        error: error.message,
+        apiStatus: {},
+      };
+
+      console.warn("Backend health check failed:", error);
+      return result;
+    }
+  }
+
+  // ============================================
+  // ENHANCED STOCK DATA METHODS
+  // ============================================
+
+  async getStockQuote(symbol) {
     try {
       const cacheKey = `quote-${symbol}`;
-
-      // Check cache first
       const cached = this.getFromCache(cacheKey, this.cacheTTL.quotes);
       if (cached) return cached;
 
-      // Try backend API
-      let rawQuote = null;
+      // Try real API first
       try {
-        rawQuote = await makeBackendApiCall(`/api/quote/${symbol}`);
+        const quoteData = await this.makeApiCall(
+          `${this.endpoints.quotes}/${symbol}`
+        );
+
+        if (quoteData && quoteData.price) {
+          const normalized = dataNormalizer.normalizeStockQuote(quoteData);
+          this.setCache(cacheKey, normalized);
+          console.log(`✅ Real quote data for ${symbol}: ${normalized.price}`);
+          return normalized;
+        }
       } catch (apiError) {
-        console.warn(`Backend API failed for ${symbol}, using mock data`);
+        console.warn(
+          `Real API failed for ${symbol}, using mock data:`,
+          apiError.message
+        );
       }
 
-      // Fallback to mock data if API fails
-      if (!rawQuote) {
-        rawQuote = this.generateEnhancedMockQuote(symbol);
-      }
-
-      // Normalize the data
-      const normalized = this.dataNormalizer.normalizeStockQuote(rawQuote);
-
-      // Cache the result
-      this.setCache(cacheKey, normalized);
-
-      return normalized;
+      // Fallback to enhanced mock data
+      const mockQuote = this.generateEnhancedMockQuote(symbol);
+      this.setCache(cacheKey, mockQuote);
+      return mockQuote;
     } catch (error) {
-      console.error(`Error fetching quote for ${symbol}:`, error);
+      console.error(`Error getting quote for ${symbol}:`, error);
       return this.generateEnhancedMockQuote(symbol);
     }
   }
 
-  async getNews(symbol) {
+  async getStockNews(symbol) {
     try {
       const cacheKey = `news-${symbol}`;
-
-      // Check cache first
       const cached = this.getFromCache(cacheKey, this.cacheTTL.news);
       if (cached) return cached;
 
-      // Try backend API
-      let rawNews = null;
+      // Try real API first
       try {
-        rawNews = await makeBackendApiCall(`/api/news/${symbol}`);
+        const newsData = await this.makeApiCall(
+          `${this.endpoints.news}/${symbol}`
+        );
+
+        if (newsData && Array.isArray(newsData.articles)) {
+          const normalized = dataNormalizer.normalizeNewsData(
+            newsData.articles
+          );
+          this.setCache(cacheKey, normalized);
+          console.log(
+            `✅ Real news data for ${symbol}: ${normalized.length} articles`
+          );
+          return normalized;
+        }
       } catch (apiError) {
-        console.warn(`Backend news API failed for ${symbol}, using mock data`);
+        console.warn(
+          `Real news API failed for ${symbol}, using mock data:`,
+          apiError.message
+        );
       }
 
-      // Fallback to mock data if API fails
-      if (!rawNews || !Array.isArray(rawNews) || rawNews.length === 0) {
-        rawNews = this.generateEnhancedMockNews(symbol);
-      }
-
-      // Normalize the data
-      const normalized = this.dataNormalizer.normalizeNewsData(rawNews);
-
-      // Cache the result
-      this.setCache(cacheKey, normalized);
-
-      return normalized;
+      // Fallback to enhanced mock news
+      const mockNews = this.generateEnhancedMockNews(symbol);
+      this.setCache(cacheKey, mockNews);
+      return mockNews;
     } catch (error) {
-      console.error(`Error fetching news for ${symbol}:`, error);
+      console.error(`Error getting news for ${symbol}:`, error);
       return this.generateEnhancedMockNews(symbol);
     }
   }
 
-  async getTechnicals(symbol) {
+  async getTechnicalData(symbol) {
     try {
       const cacheKey = `technicals-${symbol}`;
-
-      // Check cache first
       const cached = this.getFromCache(cacheKey, this.cacheTTL.technicals);
       if (cached) return cached;
 
-      // Try backend API
-      let rawTechnicals = null;
+      // Try real API first
       try {
-        rawTechnicals = await makeBackendApiCall(`/api/technicals/${symbol}`);
+        const techData = await this.makeApiCall(
+          `${this.endpoints.technicals}/${symbol}`
+        );
+
+        if (techData) {
+          const normalized = dataNormalizer.normalizeTechnicalData(techData);
+          this.setCache(cacheKey, normalized);
+          console.log(`✅ Real technical data for ${symbol}`);
+          return normalized;
+        }
       } catch (apiError) {
         console.warn(
-          `Backend technicals API failed for ${symbol}, using mock data`
+          `Real technicals API failed for ${symbol}, using mock data:`,
+          apiError.message
         );
       }
 
-      // Fallback to mock data if API fails
-      if (!rawTechnicals) {
-        rawTechnicals = this.generateEnhancedMockTechnicals(symbol);
-      }
-
-      // Normalize the data
-      const normalized =
-        this.dataNormalizer.normalizeTechnicalData(rawTechnicals);
-
-      // Cache the result
-      this.setCache(cacheKey, normalized);
-
-      return normalized;
+      // Fallback to mock technical data
+      const mockTechnicals = this.generateMockTechnicalData(symbol);
+      this.setCache(cacheKey, mockTechnicals);
+      return mockTechnicals;
     } catch (error) {
-      console.error(`Error fetching technicals for ${symbol}:`, error);
-      return this.generateEnhancedMockTechnicals(symbol);
-    }
-  }
-
-  async getOptionsFlow(symbol) {
-    try {
-      const cacheKey = `options-${symbol}`;
-
-      // Check cache first
-      const cached = this.getFromCache(cacheKey, this.cacheTTL.options);
-      if (cached) return cached;
-
-      // Try backend API
-      let rawOptions = null;
-      try {
-        rawOptions = await makeBackendApiCall(`/api/options/${symbol}`);
-      } catch (apiError) {
-        console.warn(
-          `Backend options API failed for ${symbol}, using mock data`
-        );
-      }
-
-      // Fallback to mock data if API fails
-      if (!rawOptions) {
-        rawOptions = this.generateEnhancedMockOptions(symbol);
-      }
-
-      // Normalize the data
-      const normalized = this.dataNormalizer.normalizeOptionsData(rawOptions);
-
-      // Cache the result
-      this.setCache(cacheKey, normalized);
-
-      return normalized;
-    } catch (error) {
-      console.error(`Error fetching options for ${symbol}:`, error);
-      return this.generateEnhancedMockOptions(symbol);
+      console.error(`Error getting technicals for ${symbol}:`, error);
+      return this.generateMockTechnicalData(symbol);
     }
   }
 
   // ============================================
-  // ENHANCED SCREENING METHOD
+  // ENHANCED SCREENING METHODS (Real + Mock)
   // ============================================
 
   async screenAllStocks(options = {}) {
+    console.log("🔍 Enhanced stock screening starting...", options);
+
     try {
-      console.log("📊 Starting enhanced stock screening...");
-      const startTime = performance.now();
-
-      const {
-        nissThreshold = 50,
-        minConfidence = "MEDIUM",
-        maxResults = 200,
-        sectors = "all",
-      } = options;
-
-      // Get universe to screen
-      const universe =
-        sectors === "all"
-          ? this.getScreeningUniverse()
-          : this.getUniverseByType(sectors);
-
-      console.log(`🎯 Screening ${universe.length} symbols...`);
-
-      // Update market context first
-      await this.updateMarketContext();
-
-      // Process stocks in batches to avoid overwhelming the system
-      const batchSize = 10;
-      const results = [];
-
-      for (let i = 0; i < universe.length; i += batchSize) {
-        const batch = universe.slice(i, i + batchSize);
-        console.log(
-          `📈 Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(
-            universe.length / batchSize
-          )}`
-        );
-
-        const batchPromises = batch.map((symbol) => this.analyzeStock(symbol));
-        const batchResults = await Promise.all(batchPromises);
-
-        // Filter successful results
-        const validResults = batchResults.filter(
-          (result) =>
-            result && result.nissScore !== null && !isNaN(result.nissScore)
-        );
-
-        results.push(...validResults);
-
-        // Small delay between batches to prevent rate limiting
-        if (i + batchSize < universe.length) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
+      const cacheKey = `screening-${JSON.stringify(options)}`;
+      const cached = this.getFromCache(cacheKey, this.cacheTTL.screening);
+      if (cached) {
+        console.log("📋 Using cached screening results");
+        return cached;
       }
 
-      // Filter and sort results
-      const filteredResults = results
-        .filter((stock) => {
-          const meetsThreshold =
-            Math.abs(stock.nissScore) >= Math.abs(nissThreshold);
-          const meetsConfidence = this.meetsConfidenceCriteria(
-            stock.confidence,
-            minConfidence
+      // Try real backend screening first
+      try {
+        const screeningData = await this.makeApiCall(this.endpoints.screening, {
+          method: "POST",
+          body: JSON.stringify(options),
+        });
+
+        if (screeningData && Array.isArray(screeningData.results)) {
+          console.log(
+            `✅ Real screening API: ${screeningData.results.length} stocks`
           );
-          return meetsThreshold && meetsConfidence;
-        })
-        .sort((a, b) => Math.abs(b.nissScore) - Math.abs(a.nissScore))
-        .slice(0, maxResults);
 
-      const endTime = performance.now();
-      const processingTime = ((endTime - startTime) / 1000).toFixed(2);
+          // Enhance results with NISS calculations
+          const enhancedResults = await Promise.all(
+            screeningData.results.map((stock) =>
+              this.enhanceStockWithNISS(stock)
+            )
+          );
 
-      console.log(
-        `✅ Enhanced screening completed: ${filteredResults.length} results in ${processingTime}s`
-      );
+          this.setCache(cacheKey, enhancedResults);
+          return enhancedResults;
+        }
+      } catch (apiError) {
+        console.warn(
+          "Real screening API failed, using mock screening:",
+          apiError.message
+        );
+      }
 
-      return filteredResults;
+      // Fallback to enhanced mock screening
+      const mockResults = await this.generateMockScreeningResults(options);
+      this.setCache(cacheKey, mockResults);
+      return mockResults;
     } catch (error) {
-      console.error("❌ Enhanced screening failed:", error);
+      console.error("Screening completely failed:", error);
       throw error;
     }
   }
 
   async analyzeStock(symbol) {
+    console.log(`🔍 Analyzing ${symbol} with real/mock APIs...`);
+
     try {
-      // Fetch all required data concurrently
-      const [stockData, newsData, technicalData, optionsData] =
-        await Promise.all([
-          this.getQuote(symbol),
-          this.getNews(symbol),
-          this.getTechnicals(symbol),
-          this.getOptionsFlow(symbol),
-        ]);
+      // Get all data sources (real API first, mock fallback)
+      const [quote, news, technicals] = await Promise.all([
+        this.getStockQuote(symbol),
+        this.getStockNews(symbol),
+        this.getTechnicalData(symbol),
+      ]);
 
-      // Calculate NISS using the engine
-      const nissResult = this.nissEngine.calculateNISS(
-        stockData,
-        newsData,
-        technicalData,
-        optionsData,
-        this.marketContext
-      );
+      // Calculate NISS score using real engine
+      const nissData = NISSCalculationEngine.calculateNISS({
+        symbol,
+        quote,
+        news,
+        technicals,
+        marketContext: this.getMarketContext(),
+      });
 
-      // Generate trade setup
-      const tradeSetup = this.nissEngine.generateTradeSetup(
-        stockData,
-        nissResult
-      );
-
-      // Return complete analysis
-      return {
-        ...stockData,
-        nissScore: nissResult.score,
-        nissComponents: nissResult.components,
-        confidence: nissResult.confidence,
-        regimeAdjustment: nissResult.regimeAdjustment,
-        tradeSetup: tradeSetup,
-        news: newsData,
-        technicals: technicalData,
-        options: optionsData,
-        analysisTime: nissResult.metadata.processingTime,
+      // Create comprehensive analysis
+      const analysis = {
+        symbol,
+        company: quote.company || `${symbol} Inc.`,
+        currentPrice: quote.price,
+        nissScore: nissData.score,
+        confidence: nissData.confidence,
+        sector: quote.sector || this.guessSectorForSymbol(symbol),
+        marketCap: quote.marketCap,
+        priceData: {
+          change: quote.change,
+          changePercent: quote.changePercent,
+          volume: quote.volume,
+        },
+        volumeData: {
+          relativeVolume: quote.relativeVolume || 1,
+          volume: quote.volume,
+        },
+        technicalData: technicals,
+        latestNews: news[0] || null,
+        recentNews: news.slice(0, 5),
+        nissComponents: nissData.components,
+        tradeSetup: nissData.tradeSetup,
         lastUpdate: new Date().toISOString(),
       };
+
+      console.log(
+        `✅ Analysis complete for ${symbol}: NISS ${analysis.nissScore.toFixed(
+          1
+        )}`
+      );
+      return analysis;
     } catch (error) {
-      console.error(`❌ Analysis failed for ${symbol}:`, error);
-      return null;
+      console.error(`Analysis failed for ${symbol}:`, error);
+      throw error;
     }
   }
 
   // ============================================
-  // MARKET CONTEXT MANAGEMENT
+  // MOCK DATA GENERATORS (Enhanced for realism)
   // ============================================
 
-  async updateMarketContext() {
-    try {
-      // Get SPY data for market context
-      const spyData = await this.getQuote("SPY");
+  generateEnhancedMockQuote(symbol) {
+    const basePrice = 50 + Math.random() * 200;
+    const change = (Math.random() - 0.5) * 10;
+    const volume = Math.floor(1000000 + Math.random() * 50000000);
 
-      // Update market regime (simplified for now)
-      this.marketContext = {
-        volatility: spyData.changePercent > 2 ? "HIGH" : "NORMAL",
-        trend:
-          spyData.changePercent > 0.5
-            ? "BULLISH"
-            : spyData.changePercent < -0.5
-            ? "BEARISH"
-            : "NEUTRAL",
-        breadth: "MIXED", // Will be enhanced later
-        spyChange: spyData.changePercent,
-        vixLevel: 20, // Default VIX level (will be enhanced later)
-        sectorPerformance: {}, // Will be populated with real sector data later
-        lastUpdate: new Date(),
-      };
+    return {
+      symbol,
+      company: `${symbol} Inc.`,
+      price: basePrice,
+      change: change,
+      changePercent: (change / basePrice) * 100,
+      volume: volume,
+      marketCap: (1 + Math.random() * 500) * 1e9,
+      sector: this.guessSectorForSymbol(symbol),
+      relativeVolume: 0.5 + Math.random() * 3,
+      lastUpdate: new Date().toISOString(),
+    };
+  }
 
-      console.log("📊 Market context updated:", this.marketContext);
-    } catch (error) {
-      console.error("Market context update failed:", error);
-      // Use default values
-      this.marketContext = {
-        volatility: "NORMAL",
-        trend: "NEUTRAL",
-        breadth: "MIXED",
-        spyChange: 0,
-        vixLevel: 20,
-        sectorPerformance: {},
-        lastUpdate: new Date(),
+  generateEnhancedMockNews(symbol) {
+    const newsTemplates = [
+      `${symbol} reports quarterly earnings beat expectations`,
+      `${symbol} announces new product launch and expansion plans`,
+      `${symbol} signs strategic partnership agreement`,
+      `${symbol} receives regulatory approval for key initiative`,
+      `${symbol} management discusses future growth strategy`,
+      `Analysts upgrade ${symbol} with positive outlook`,
+      `${symbol} completes acquisition to strengthen market position`,
+      `${symbol} invests in new technology and innovation`,
+    ];
+
+    const sources = [
+      "Reuters",
+      "Bloomberg",
+      "WSJ",
+      "MarketWatch",
+      "CNBC",
+      "Yahoo Finance",
+    ];
+
+    return Array.from({ length: 3 + Math.floor(Math.random() * 5) }, (_, i) => {
+      const template =
+        newsTemplates[Math.floor(Math.random() * newsTemplates.length)];
+      const source = sources[Math.floor(Math.random() * sources.length)];
+      const hoursAgo = Math.random() * 24;
+
+      return {
+        headline: template,
+        source: source,
+        timestamp: new Date(Date.now() - hoursAgo * 3600000).toISOString(),
+        url: `https://mock-news.com/${symbol.toLowerCase()}-${i}`,
+        sentiment: (Math.random() - 0.5) * 2, // -1 to +1
+        impactScore: (Math.random() - 0.3) * 20, // Slight positive bias
+        relevance: 0.7 + Math.random() * 0.3, // 0.7 to 1.0
       };
+    });
+  }
+
+  generateMockTechnicalData(symbol) {
+    const price = 50 + Math.random() * 200;
+
+    return {
+      symbol,
+      atr: price * (0.02 + Math.random() * 0.03), // 2-5% ATR
+      rsi: 30 + Math.random() * 40, // 30-70 RSI range
+      macd: (Math.random() - 0.5) * 2,
+      stochastic: Math.random() * 100,
+      bollinger: {
+        upper: price * 1.02,
+        middle: price,
+        lower: price * 0.98,
+      },
+      support: price * (0.95 + Math.random() * 0.03),
+      resistance: price * (1.02 + Math.random() * 0.03),
+      trend: ["BULLISH", "NEUTRAL", "BEARISH"][Math.floor(Math.random() * 3)],
+      strength: Math.random() * 100,
+      lastUpdate: new Date().toISOString(),
+    };
+  }
+
+  async generateMockScreeningResults(options = {}) {
+    console.log("🎭 Generating enhanced mock screening results...", options);
+
+    const symbols = [
+      "AAPL",
+      "MSFT",
+      "GOOGL",
+      "AMZN",
+      "TSLA",
+      "NVDA",
+      "META",
+      "NFLX",
+      "CRM",
+      "ADBE",
+      "ORCL",
+      "INTC",
+      "AMD",
+      "QCOM",
+      "AVGO",
+      "TXN",
+      "MU",
+      "AMAT",
+      "LRCX",
+      "KLAC",
+      "SHOP",
+      "SQ",
+      "PYPL",
+      "V",
+      "MA",
+      "AXP",
+      "JPM",
+      "BAC",
+      "WFC",
+      "GS",
+      "JNJ",
+      "PFE",
+      "UNH",
+      "ABBV",
+      "TMO",
+      "DHR",
+      "BMY",
+      "AMGN",
+      "GILD",
+      "VRTX",
+      "XOM",
+      "CVX",
+      "COP",
+      "EOG",
+      "SLB",
+      "PSX",
+      "VLO",
+      "MPC",
+      "OXY",
+      "DVN",
+    ];
+
+    const maxResults = options.maxResults || 50;
+    const selectedSymbols = symbols.slice(
+      0,
+      Math.min(maxResults, symbols.length)
+    );
+
+    // Generate screening results with proper NISS calculations
+    const results = await Promise.all(
+      selectedSymbols.map(async (symbol) => {
+        const quote = this.generateEnhancedMockQuote(symbol);
+        const news = this.generateEnhancedMockNews(symbol);
+        const technicals = this.generateMockTechnicalData(symbol);
+
+        // Calculate real NISS score
+        const nissData = NISSCalculationEngine.calculateNISS({
+          symbol,
+          quote,
+          news,
+          technicals,
+          marketContext: this.getMarketContext(),
+        });
+
+        return {
+          symbol,
+          company: quote.company,
+          currentPrice: quote.price,
+          nissScore: nissData.score,
+          confidence: nissData.confidence,
+          sector: quote.sector,
+          marketCap: quote.marketCap,
+          priceData: {
+            change: quote.change,
+            changePercent: quote.changePercent,
+            volume: quote.volume,
+          },
+          volumeData: {
+            relativeVolume: quote.relativeVolume,
+            volume: quote.volume,
+          },
+          technicalData: technicals,
+          latestNews: news[0] || null,
+          recentNews: news.slice(0, 5),
+          nissComponents: nissData.components,
+          tradeSetup: nissData.tradeSetup,
+          lastUpdate: new Date().toISOString(),
+        };
+      })
+    );
+
+    // Apply filtering based on options
+    let filteredResults = results;
+
+    if (options.nissThreshold) {
+      filteredResults = filteredResults.filter(
+        (stock) => Math.abs(stock.nissScore) >= options.nissThreshold
+      );
     }
+
+    if (options.minConfidence && options.minConfidence !== "LOW") {
+      const confidenceOrder = { LOW: 1, MEDIUM: 2, HIGH: 3 };
+      const minLevel = confidenceOrder[options.minConfidence];
+      filteredResults = filteredResults.filter(
+        (stock) => confidenceOrder[stock.confidence] >= minLevel
+      );
+    }
+
+    if (options.sectors && options.sectors !== "all") {
+      const allowedSectors = Array.isArray(options.sectors)
+        ? options.sectors
+        : [options.sectors];
+      filteredResults = filteredResults.filter((stock) =>
+        allowedSectors.includes(stock.sector)
+      );
+    }
+
+    // Sort by NISS score (highest absolute values first)
+    filteredResults.sort(
+      (a, b) => Math.abs(b.nissScore) - Math.abs(a.nissScore)
+    );
+
+    console.log(
+      `✅ Mock screening complete: ${filteredResults.length} qualifying stocks`
+    );
+    return filteredResults;
+  }
+
+  async enhanceStockWithNISS(rawStock) {
+    try {
+      // If stock already has NISS data, return as-is
+      if (rawStock.nissScore !== undefined) {
+        return rawStock;
+      }
+
+      // Get additional data needed for NISS calculation
+      const [news, technicals] = await Promise.all([
+        this.getStockNews(rawStock.symbol),
+        this.getTechnicalData(rawStock.symbol),
+      ]);
+
+      // Calculate NISS score
+      const nissData = NISSCalculationEngine.calculateNISS({
+        symbol: rawStock.symbol,
+        quote: rawStock,
+        news,
+        technicals,
+        marketContext: this.getMarketContext(),
+      });
+
+      // Return enhanced stock object
+      return {
+        ...rawStock,
+        nissScore: nissData.score,
+        confidence: nissData.confidence,
+        nissComponents: nissData.components,
+        tradeSetup: nissData.tradeSetup,
+        recentNews: news.slice(0, 5),
+        latestNews: news[0] || null,
+        technicalData: technicals,
+        lastUpdate: new Date().toISOString(),
+      };
+    } catch (error) {
+      console.error(`Failed to enhance ${rawStock.symbol} with NISS:`, error);
+      return rawStock; // Return original if enhancement fails
+    }
+  }
+
+  // ============================================
+  // UTILITY METHODS
+  // ============================================
+
+  guessSectorForSymbol(symbol) {
+    const sectorMap = {
+      AAPL: "Technology",
+      MSFT: "Technology",
+      GOOGL: "Technology",
+      AMZN: "Consumer Discretionary",
+      TSLA: "Consumer Discretionary",
+      NVDA: "Technology",
+      META: "Communication Services",
+      NFLX: "Communication Services",
+      CRM: "Technology",
+      ADBE: "Technology",
+      ORCL: "Technology",
+      INTC: "Technology",
+      AMD: "Technology",
+      QCOM: "Technology",
+      JNJ: "Healthcare",
+      PFE: "Healthcare",
+      UNH: "Healthcare",
+      ABBV: "Healthcare",
+      XOM: "Energy",
+      CVX: "Energy",
+      COP: "Energy",
+      EOG: "Energy",
+    };
+
+    return sectorMap[symbol] || "Technology";
+  }
+
+  getMarketContext() {
+    return {
+      volatility: "NORMAL",
+      trend: "NEUTRAL",
+      breadth: "MIXED",
+      spyChange: 0,
+      vix: 20,
+      timestamp: new Date().toISOString(),
+    };
   }
 
   // ============================================
@@ -630,340 +680,98 @@ class InstitutionalDataService {
   // ============================================
 
   setCache(key, data) {
-    this.cache.set(key, {
-      data: data,
-      timestamp: Date.now(),
-    });
+    try {
+      this.cache.set(key, {
+        data,
+        timestamp: Date.now(),
+      });
 
-    // Clean old cache entries if cache gets too large
-    if (this.cache.size > 1000) {
-      this.cleanCache();
+      // Limit cache size to prevent memory issues
+      if (this.cache.size > 1000) {
+        const oldestKey = this.cache.keys().next().value;
+        this.cache.delete(oldestKey);
+      }
+    } catch (error) {
+      console.warn("Cache write failed:", error);
     }
   }
 
   getFromCache(key, ttl) {
-    const cached = this.cache.get(key);
+    try {
+      const cached = this.cache.get(key);
+      if (!cached) return null;
 
-    if (!cached) return null;
+      const age = Date.now() - cached.timestamp;
+      if (age > ttl) {
+        this.cache.delete(key);
+        return null;
+      }
 
-    const age = Date.now() - cached.timestamp;
-    if (age > ttl) {
-      this.cache.delete(key);
+      return cached.data;
+    } catch (error) {
+      console.warn("Cache read failed:", error);
       return null;
     }
-
-    return cached.data;
   }
 
-  cleanCache() {
-    const now = Date.now();
-    const maxAge = 10 * 60 * 1000; // 10 minutes max age
-
-    for (const [key, value] of this.cache.entries()) {
-      if (now - value.timestamp > maxAge) {
-        this.cache.delete(key);
-      }
+  clearCache() {
+    try {
+      this.cache.clear();
+      console.log("🧹 Cache cleared successfully");
+    } catch (error) {
+      console.warn("Cache clear failed:", error);
     }
-
-    console.log(`🧹 Cache cleaned. Size: ${this.cache.size}`);
   }
 
   // ============================================
-  // UTILITY METHODS
+  // STATUS AND HEALTH METHODS
   // ============================================
-
-  meetsConfidenceCriteria(confidence, minConfidence) {
-    const confidenceLevels = { LOW: 1, MEDIUM: 2, HIGH: 3 };
-    return confidenceLevels[confidence] >= confidenceLevels[minConfidence];
-  }
-
-  hashCode(str) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = (hash << 5) - hash + char;
-      hash = hash & hash; // Convert to 32bit integer
-    }
-    return Math.abs(hash);
-  }
-
-  getSectorForSymbol(symbol) {
-    for (const [sector, symbols] of Object.entries(this.screeningUniverse)) {
-      if (symbols.includes(symbol)) {
-        return sector.charAt(0).toUpperCase() + sector.slice(1);
-      }
-    }
-    return "Technology"; // Default
-  }
-
-  getSectorPriceMultiplier(symbol) {
-    const sector = this.getSectorForSymbol(symbol);
-    const multipliers = {
-      MegaCap: 3.5,
-      GrowthTech: 2.8,
-      Semiconductor: 2.5,
-      Biotech: 1.8,
-      Financial: 1.5,
-      Energy: 1.3,
-      Consumer: 1.4,
-      Industrial: 1.6,
-    };
-
-    return multipliers[sector] || 1.5;
-  }
-
-  getSectorVolatility(sector) {
-    const volatilities = {
-      MegaCap: 0.03,
-      GrowthTech: 0.08,
-      Semiconductor: 0.06,
-      Biotech: 0.12,
-      Financial: 0.05,
-      Energy: 0.07,
-      Consumer: 0.03,
-      Industrial: 0.04,
-    };
-
-    return volatilities[sector] || 0.05;
-  }
-
-  // ============================================
-  // HEALTH MONITORING
-  // ============================================
-
-  initializeHealthMonitoring() {
-    // Check backend health periodically
-    setInterval(async () => {
-      try {
-        this.backendHealth = await checkBackendHealth();
-        this.lastHealthCheck = Date.now();
-      } catch (error) {
-        this.backendHealth = false;
-        console.warn("Backend health check failed:", error);
-      }
-    }, this.healthCheckInterval);
-  }
 
   getServiceStatus() {
     return {
       version: this.version,
-      backendHealth: this.backendHealth,
+      initialized: this.initialized,
       cacheSize: this.cache.size,
-      totalSymbols: this.getTotalSymbols(),
-      lastHealthCheck: new Date(this.lastHealthCheck).toISOString(),
-      marketContext: this.marketContext,
-      requestHistory: this.requestHistory.length,
+      backendUrl: this.backendBaseUrl,
+      endpoints: this.endpoints,
+      lastHealthCheck: new Date().toISOString(),
     };
   }
 
-  // ============================================
-  // MOCK DATA GENERATORS (Enhanced)
-  // ============================================
+  async getHealthReport() {
+    try {
+      const backendHealth = await this.checkBackendHealth();
 
-  generateEnhancedMockQuote(symbol) {
-    const sector = this.getSectorForSymbol(symbol);
-    const sectorMultiplier = this.getSectorPriceMultiplier(symbol);
-    const basePrice = (20 + (this.hashCode(symbol) % 150)) * sectorMultiplier;
-    const volatility = this.getSectorVolatility(sector);
-
-    const changePercent = (Math.random() - 0.5) * volatility * 100;
-    const change = (basePrice * changePercent) / 100;
-    const currentPrice = Math.max(1, basePrice + change);
-
-    return {
-      symbol: symbol,
-      price: parseFloat(currentPrice.toFixed(2)),
-      change: parseFloat(change.toFixed(2)),
-      changePercent: parseFloat(changePercent.toFixed(2)),
-      volume: Math.floor(500000 + Math.random() * 3000000),
-      avgVolume: Math.floor(400000 + Math.random() * 2000000),
-      high: parseFloat((currentPrice * (1 + Math.random() * 0.03)).toFixed(2)),
-      low: parseFloat((currentPrice * (1 - Math.random() * 0.03)).toFixed(2)),
-      open: parseFloat(
-        (basePrice * (1 + (Math.random() - 0.5) * 0.02)).toFixed(2)
-      ),
-      previousClose: parseFloat(basePrice.toFixed(2)),
-      high52Week: parseFloat(
-        (basePrice * (1.2 + Math.random() * 0.8)).toFixed(2)
-      ),
-      low52Week: parseFloat(
-        (basePrice * (0.6 + Math.random() * 0.3)).toFixed(2)
-      ),
-      marketCap: Math.floor(
-        currentPrice * (10 + Math.random() * 500) * 1000000
-      ),
-      sector: sector,
-      timestamp: new Date().toISOString(),
-      dataSource: "Enhanced Mock",
-    };
-  }
-
-  generateEnhancedMockNews(symbol) {
-    const sector = this.getSectorForSymbol(symbol);
-    const newsTemplates = this.getNewsTemplatesForSector(sector, symbol);
-
-    return newsTemplates.map((template, index) => ({
-      headline: template.headline,
-      summary: `${template.headline} - Market analysis and implications for ${symbol}`,
-      source: this.getCredibleSource(),
-      datetime: new Date(Date.now() - index * 3600000).toISOString(), // Spread over hours
-      url: `https://example.com/news/${symbol.toLowerCase()}-${index}`,
-      sentiment: template.sentiment + (Math.random() - 0.5) * 0.2, // Add some variance
-      relevanceScore: 70 + Math.random() * 25, // High relevance for mock data
-      category: template.category,
-      catalysts: template.catalysts,
-    }));
-  }
-
-  generateEnhancedMockTechnicals(symbol) {
-    const basePrice = 50 + (this.hashCode(symbol) % 150);
-
-    return {
-      rsi: 30 + Math.random() * 40, // 30-70 range
-      macd: (Math.random() - 0.5) * 3,
-      macdSignal: (Math.random() - 0.5) * 2,
-      macdHistogram: (Math.random() - 0.5) * 1,
-      sma20: basePrice * (0.98 + Math.random() * 0.04),
-      sma50: basePrice * (0.95 + Math.random() * 0.06),
-      sma200: basePrice * (0.9 + Math.random() * 0.15),
-      bollinger: {
-        upper: basePrice * 1.02,
-        middle: basePrice,
-        lower: basePrice * 0.98,
-      },
-      adx: 15 + Math.random() * 40,
-      atr: basePrice * (0.01 + Math.random() * 0.03),
-      stochastic: 20 + Math.random() * 60,
-      momentum: 40 + Math.random() * 20,
-      williamsR: -80 + Math.random() * 60,
-      timestamp: new Date().toISOString(),
-      dataSource: "Enhanced Mock",
-    };
-  }
-
-  generateEnhancedMockOptions(symbol) {
-    return {
-      putCallRatio: 0.6 + Math.random() * 0.8, // 0.6-1.4 range
-      callVolume: Math.floor(Math.random() * 15000),
-      putVolume: Math.floor(Math.random() * 10000),
-      callOI: Math.floor(Math.random() * 75000),
-      putOI: Math.floor(Math.random() * 60000),
-      unusualActivity: Math.random() < 0.15, // 15% chance
-      impliedVolatility: 0.15 + Math.random() * 0.5, // 15%-65% IV
-      timestamp: new Date().toISOString(),
-      dataSource: "Enhanced Mock",
-    };
-  }
-
-  // ============================================
-  // NEWS TEMPLATE GENERATORS
-  // ============================================
-
-  getNewsTemplatesForSector(sector, symbol) {
-    const sectorTemplates = {
-      MegaCap: [
-        {
-          headline: `${symbol} quarterly earnings exceed analyst expectations`,
-          sentiment: 0.8,
-          catalysts: ["earnings"],
-          category: "earnings",
+      return {
+        overall: backendHealth.healthy ? "HEALTHY" : "DEGRADED",
+        backend: backendHealth,
+        cache: {
+          size: this.cache.size,
+          maxSize: 1000,
+          hitRate: "85%", // Mock metric
         },
-        {
-          headline: `${symbol} announces major strategic partnership`,
-          sentiment: 0.6,
-          catalysts: ["partnership"],
-          category: "corporate",
+        apis: {
+          alphaVantage: backendHealth.apiStatus?.alphaVantage || false,
+          finnhub: backendHealth.apiStatus?.finnhub || false,
+          polygon: backendHealth.apiStatus?.polygon || false,
         },
-      ],
-      GrowthTech: [
-        {
-          headline: `${symbol} reports strong user growth metrics`,
-          sentiment: 0.7,
-          catalysts: ["growth"],
-          category: "performance",
+        performance: {
+          avgResponseTime: "250ms", // Mock metric
+          successRate: "95%", // Mock metric
         },
-        {
-          headline: `${symbol} faces increased competition concerns`,
-          sentiment: -0.4,
-          catalysts: ["competition"],
-          category: "market",
-        },
-      ],
-      Biotech: [
-        {
-          headline: `${symbol} receives FDA breakthrough therapy designation`,
-          sentiment: 0.9,
-          catalysts: ["fda"],
-          category: "regulatory",
-        },
-        {
-          headline: `${symbol} clinical trial shows promising results`,
-          sentiment: 0.7,
-          catalysts: ["clinical"],
-          category: "research",
-        },
-      ],
-    };
-
-    const defaultTemplates = [
-      {
-        headline: `${symbol} quarterly earnings meet expectations`,
-        sentiment: 0.5,
-        catalysts: ["earnings"],
-        category: "earnings",
-      },
-      {
-        headline: `Analysts update ${symbol} price target`,
-        sentiment: 0.4,
-        catalysts: ["analyst"],
-        category: "analyst",
-      },
-    ];
-
-    return sectorTemplates[sector] || defaultTemplates;
-  }
-
-  getCredibleSource() {
-    const sources = [
-      "Reuters",
-      "Bloomberg",
-      "Wall Street Journal",
-      "Financial Times",
-      "MarketWatch",
-      "CNBC",
-      "Yahoo Finance",
-      "Seeking Alpha",
-    ];
-    return sources[Math.floor(Math.random() * sources.length)];
-  }
-
-  getSectorVolatility(sector) {
-    const volatilities = {
-      MegaCap: 0.03,
-      GrowthTech: 0.08,
-      Semiconductor: 0.06,
-      Biotech: 0.12,
-      Financial: 0.05,
-      Energy: 0.07,
-      Consumer: 0.03,
-      Industrial: 0.04,
-    };
-
-    return volatilities[sector] || 0.05;
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      return {
+        overall: "ERROR",
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
   }
 }
 
-// Export singleton instance
+// Create and export singleton instance
 const institutionalDataService = new InstitutionalDataService();
-
-// Initialize health monitoring
-institutionalDataService.initializeHealthMonitoring();
-
-console.log("🚀 Enhanced InstitutionalDataService initialized");
-console.log(
-  `📊 Universe: ${institutionalDataService.getTotalSymbols()} symbols across ${
-    Object.keys(institutionalDataService.screeningUniverse).length
-  } sectors`
-);
 
 export default institutionalDataService;
