@@ -9,8 +9,9 @@ class InstitutionalDataService {
     this.version = "4.0.0-multi-api";
     this.cache = new Map();
     this.initialized = false;
-    this.backendBaseUrl =
-      process.env.REACT_APP_BACKEND_URL || "http://localhost:3001";
+    this.backendBaseUrl = window.location.hostname.includes("vercel.app")
+      ? "https://news-impact-screener-backend.onrender.com"
+      : process.env.REACT_APP_BACKEND_URL || "http://localhost:3001";
 
     // Enhanced cache TTL settings for 15-minute refresh strategy
     this.cacheTTL = {
