@@ -5,22 +5,11 @@
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#000000" />
-    <meta
-      name="description"
-      content="News Impact Screener - Stock Analysis Tool"
-    />
-    <!-- Remove any restrictive CSP headers -->
+    <meta name="description" content="News Impact Screener - Stock Analysis Tool" />
     <title>News Impact Screener</title>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
-    <!-- Emergency fallback -->
-    <script>
-      if (!window.React) {
-        document.body.innerHTML =
-          '<div style="padding:40px;font-family:Arial;"><h1>🚨 JavaScript Loading Issue</h1><p>Please try:</p><ul><li>Refresh the page</li><li>Clear browser cache</li><li>Try incognito mode</li><li>Disable browser extensions</li></ul></div>';
-      }
-    </script>
   </body>
 </html>
