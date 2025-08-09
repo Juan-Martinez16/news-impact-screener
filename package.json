@@ -12,6 +12,7 @@
     "dev": "concurrently \"npm run backend\" \"npm start\"",
     "verify": "bash verification-script.sh",
     "clean": "rm -rf node_modules backend/node_modules && npm install && cd backend && npm install",
+    "deploy": "npm run build",
     "deploy:backend": "cd backend && npm run start",
     "deploy:frontend": "npm run build"
   },
