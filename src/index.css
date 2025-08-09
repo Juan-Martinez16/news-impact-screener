@@ -1,12 +1,50 @@
-/* Basic CSS reset */
+/* src/index.css - Enhanced with Tailwind */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom CSS Variables for JM Brand */
+:root {
+  --jm-primary-deep: #1e40af;
+  --jm-primary: #3b82f6;
+  --jm-primary-light: #60a5fa;
+  --jm-pale: #e0e7ff;
+  --jm-light: #f0f4ff;
+}
+
+/* Base Styles */
 body {
   margin: 0;
-  font-family: Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
+    "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
+    sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: #f8fafc;
 }
 
 * {
   box-sizing: border-box;
 }
-/* Build timestamp: Mon Aug  4 22:05:15 BST 2025 */
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New",
+    monospace;
+}
+
+/* Loading Animation Fix */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Ensure Lucide Icons Display Properly */
+.lucide {
+  display: inline-block;
+  vertical-align: middle;
+}
