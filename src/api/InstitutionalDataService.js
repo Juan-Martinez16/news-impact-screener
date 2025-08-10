@@ -436,3 +436,4 @@ if (typeof window !== "undefined") {
 }
 
 export default institutionalDataService;
+// Build trigger: Sun Aug 10 22:38:09 BST 2025
