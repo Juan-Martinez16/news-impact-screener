@@ -10,35 +10,31 @@
       }
     }
   ],
-  "routes": [
+  "rewrites": [
     {
-      "src": "/static/(.*)",
-      "headers": {
-        "cache-control": "s-maxage=31536000,immutable"
-      },
-      "dest": "/static/$1"
-    },
-    {
-      "src": "/(.*\\.(js|css|ico|png|jpg|jpeg|gif|svg|woff|woff2|ttf|eot))",
-      "headers": {
-        "cache-control": "s-maxage=86400"
-      },
-      "dest": "/$1"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/index.html"
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ],
-  "env": {
-    "REACT_APP_BACKEND_URL": "https://news-impact-screener-backend.onrender.com",
-    "REACT_APP_VERSION": "4.0.0",
-    "REACT_APP_ENVIRONMENT": "production",
-    "GENERATE_SOURCEMAP": "false",
-    "DISABLE_ESLINT_PLUGIN": "true",
-    "CI": "false"
-  },
   "headers": [
+    {
+      "source": "/static/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "s-maxage=31536000,immutable"
+        }
+      ]
+    },
+    {
+      "source": "/(.*\\.(js|css|ico|png|jpg|jpeg|gif|svg|woff|woff2|ttf|eot))",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "s-maxage=86400"
+        }
+      ]
+    },
     {
       "source": "/(.*)",
       "headers": [
@@ -56,5 +52,13 @@
         }
       ]
     }
-  ]
+  ],
+  "env": {
+    "REACT_APP_BACKEND_URL": "https://news-impact-screener-backend.onrender.com",
+    "REACT_APP_VERSION": "4.0.0",
+    "REACT_APP_ENVIRONMENT": "production",
+    "GENERATE_SOURCEMAP": "false",
+    "DISABLE_ESLINT_PLUGIN": "true",
+    "CI": "false"
+  }
 }
