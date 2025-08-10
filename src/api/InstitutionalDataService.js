@@ -495,6 +495,6 @@ class InstitutionalDataService {
 }
 
 // Create and export singleton instance
-const InstitutionalDataService = new InstitutionalDataService();
+const institutionalDataService = new InstitutionalDataService();
 
-export default InstitutionalDataService;
+export default institutionalDataService;
