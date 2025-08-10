@@ -1,5 +1,5 @@
 // src/App.js - PRODUCTION READY VERSION
-// Clean, optimized version for production deployment
+// Clean implementation with proper environment validation
 
 import React from "react";
 import "./App.css";
@@ -11,8 +11,10 @@ function App() {
   React.useEffect(() => {
     const backendUrl = process.env.REACT_APP_BACKEND_URL;
     const version = process.env.REACT_APP_VERSION;
+    const environment = process.env.REACT_APP_ENVIRONMENT;
 
-    console.log("🚀 News Impact Screener v" + (version || "4.0.0"));
+    console.log("🚀 News Impact Screener v" + (version || "4.0.0-production"));
+    console.log("🌍 Environment:", environment || "development");
     console.log("🔗 Backend URL:", backendUrl || "NOT CONFIGURED");
 
     if (!backendUrl) {
@@ -23,6 +25,15 @@ function App() {
     } else {
       console.log("✅ Backend URL configured correctly");
     }
+
+    // Log all React environment variables for debugging
+    const reactEnvVars = Object.keys(process.env).filter((key) =>
+      key.startsWith("REACT_APP_")
+    );
+    console.log("📋 React Environment Variables:", reactEnvVars.length);
+    reactEnvVars.forEach((key) => {
+      console.log(`   ${key}: ${process.env[key]}`);
+    });
   }, []);
 
   return (
