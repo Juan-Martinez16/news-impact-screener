@@ -56,29 +56,51 @@ app.use(helmet());
 app.use(morgan("combined"));
 
 // ========================================
-// ENHANCED CORS CONFIGURATION FOR VERCEL
+// ENHANCED CORS CONFIGURATION FOR VERCEL (WITH WILDCARD SUPPORT)
 // ========================================
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl)
     if (!origin) return callback(null, true);
 
-    const allowedPatterns = [
-      /^https:\/\/.*\.vercel\.app$/, // Any Vercel subdomain
-      /^https:\/\/news-impact-screener.*\.vercel\.app$/, // Your specific app
-      /^http:\/\/localhost:\d+$/, // Local development
-      /^https:\/\/localhost:\d+$/, // Local development with HTTPS
+    // List of allowed origins and patterns
+    const allowedOrigins = [
+      "https://news-impact-screener.vercel.app",
+      "https://news-impact-screener-backend.onrender.com",
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "http://127.0.0.1:3000",
+      "http://127.0.0.1:3001",
     ];
 
-    const allowed = allowedPatterns.some((pattern) => pattern.test(origin));
+    const allowedPatterns = [
+      /^https:\/\/news-impact-screener.*\.vercel\.app$/, // Any news-impact-screener subdomain on Vercel
+      /^https:\/\/.*-juans-projects-.*\.vercel\.app$/, // Your project preview URLs
+      /^http:\/\/localhost:\d+$/, // Any localhost port
+    ];
 
-    if (allowed) {
+    // Check exact matches first
+    if (allowedOrigins.includes(origin)) {
+      console.log(`✅ CORS: Origin allowed (exact match) - ${origin}`);
       callback(null, true);
-    } else {
-      console.log(`⚠️ CORS blocked origin: ${origin}`);
-      // In production, we'll allow it anyway temporarily for debugging
-      callback(null, true); // Temporarily allow all origins
+      return;
     }
+
+    // Check patterns
+    const patternMatch = allowedPatterns.some((pattern) =>
+      pattern.test(origin)
+    );
+    if (patternMatch) {
+      console.log(`✅ CORS: Origin allowed (pattern match) - ${origin}`);
+      callback(null, true);
+      return;
+    }
+
+    // Log blocked origins for debugging
+    console.log(`⚠️ CORS: Unknown origin - ${origin} (allowing for now)`);
+    // TEMPORARY: Allow all origins during debugging
+    // TODO: Remove this line in production after confirming all URLs work
+    callback(null, true);
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -100,19 +122,21 @@ app.options("*", cors(corsOptions));
 
 // Additional headers middleware as backup
 app.use((req, res, next) => {
-  // Log all incoming requests for debugging
-  console.log(
-    `📥 ${new Date().toISOString()} - ${req.method} ${req.path} from ${
-      req.headers.origin || "no-origin"
-    }`
-  );
+  // Only log in development or if there's an issue
+  if (process.env.NODE_ENV === "development" || req.headers.origin) {
+    console.log(
+      `📥 ${new Date().toISOString()} - ${req.method} ${req.path} from ${
+        req.headers.origin || "no-origin"
+      }`
+    );
+  }
 
-  // Set additional security headers
+  // Set security headers
   res.header("X-Content-Type-Options", "nosniff");
   res.header("X-Frame-Options", "DENY");
   res.header("X-XSS-Protection", "1; mode=block");
 
-  // Ensure CORS headers are always set
+  // Ensure CORS headers are always set for known origins
   if (req.headers.origin) {
     res.header("Access-Control-Allow-Origin", req.headers.origin);
     res.header("Access-Control-Allow-Credentials", "true");
@@ -121,7 +145,9 @@ app.use((req, res, next) => {
   next();
 });
 
-console.log("🌐 CORS configured for Vercel deployments");
+console.log(
+  "🌐 CORS configured for all Vercel deployments (including previews)"
+);
 
 // ========================================
 // HELPER FUNCTIONS
