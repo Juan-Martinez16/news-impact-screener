@@ -1,5 +1,5 @@
-// src/components/NewsImpactScreener.js - COMPLETE FIXED VERSION
-// This is the complete file - replace your entire NewsImpactScreener.js with this
+// src/components/NewsImpactScreener.js - CLEAN VERSION (No unused imports)
+// This is the complete file - replace your NewsImpactScreener.js with this
 
 import React, {
   useState,
@@ -9,33 +9,16 @@ import React, {
   useRef,
 } from "react";
 
-// Lucide icons
-import {
-  TrendingUp,
-  TrendingDown,
-  RefreshCw,
-  Settings,
-  Bell,
-  Activity,
-  AlertCircle,
-  Info,
-  Shield,
-  Target,
-  BarChart3,
-  Filter,
-  Download,
-  Eye,
-} from "lucide-react";
+// Only import the icons we actually use
+import { RefreshCw, AlertCircle, Download } from "lucide-react";
 
 // Import existing tab components
 import StockScreener from "./StockScreener";
 import CatalystAnalysisTab from "./CatalystAnalysisTab";
 import PerformanceTrackingTab from "./PerformanceTrackingTab";
 
-// Import Phase 1 engines
-import NISSCalculationEngine from "../engine/NISSCalculationEngine";
+// Import Phase 1 engines - only what we use
 import InstitutionalDataService from "../api/InstitutionalDataService";
-import dataNormalizer from "../utils/DataNormalizer";
 
 // Import Phase 2 modular components
 import HeaderComponent from "./enhanced/HeaderComponent";
@@ -278,7 +261,7 @@ const NewsImpactScreener = () => {
     } finally {
       setRefreshing(false);
     }
-  }, [loadRealData]);
+  }, [loadRealData, refreshing]); // Include refreshing dependency
 
   const handleWatchlistToggle = useCallback((symbol) => {
     console.log(`⭐ Watchlist toggle: ${symbol}`);
@@ -388,7 +371,7 @@ const NewsImpactScreener = () => {
       mountedRef.current = false;
       loadingRef.current = false;
     };
-  }, []); // Empty dependency array - runs once only
+  }, [loadRealData]); // Include loadRealData dependency
 
   // Auto-refresh effect with stable interval
   useEffect(() => {
