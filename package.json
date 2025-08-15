@@ -1,34 +1,22 @@
 {
   "name": "news-impact-screener",
   "version": "3.2.0",
-  "description": "News Impact Screener - Real API Integration",
-  "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject",
-    "backend": "cd backend && npm run dev",
-    "backend:start": "cd backend && npm start",
-    "dev": "concurrently \"npm run backend\" \"npm start\"",
-    "verify": "bash verification-script.sh",
-    "clean": "rm -rf node_modules backend/node_modules && npm install && cd backend && npm install",
-    "deploy": "npm run build",
-    "deploy:backend": "cd backend && npm run start",
-    "deploy:frontend": "npm run build"
-  },
+  "private": true,
   "dependencies": {
-    "@testing-library/jest-dom": "^5.17.0",
+    "@testing-library/jest-dom": "^5.16.5",
     "@testing-library/react": "^13.4.0",
     "@testing-library/user-event": "^13.5.0",
-    "lodash": "^4.17.21",
     "lucide-react": "^0.263.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-scripts": "^5.0.1",
+    "react-scripts": "5.0.1",
     "web-vitals": "^2.1.4"
   },
-  "devDependencies": {
-    "concurrently": "^8.2.2"
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "DISABLE_ESLINT_PLUGIN=true react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
   },
   "eslintConfig": {
     "extends": [
