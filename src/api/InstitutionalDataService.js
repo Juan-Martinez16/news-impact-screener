@@ -1,9 +1,9 @@
-// src/api/InstitutionalDataService.js - CORS FIXED VERSION v4.0.2
-// Replace your InstitutionalDataService.js with this version
+// src/api/InstitutionalDataService.js - v4.0.4-debug-enhanced
+// COMPLETE REPLACEMENT - Enhanced data extraction with comprehensive debugging
 
 class InstitutionalDataService {
   constructor() {
-    this.version = "4.0.2-cors-fixed";
+    this.version = "4.0.4-debug-enhanced";
     this.cache = new Map();
     this.initialized = false;
     this.initializing = false;
@@ -13,28 +13,11 @@ class InstitutionalDataService {
       process.env.REACT_APP_BACKEND_URL ||
       "https://news-impact-screener-backend.onrender.com";
 
-    console.log("🚀 News Impact Screener v4.0.0");
+    console.log(
+      "🚀 InstitutionalDataService v4.0.4 initializing (DEBUG-ENHANCED)..."
+    );
     console.log("🌍 Environment:", process.env.NODE_ENV || "development");
     console.log("🔗 Backend URL:", this.backendBaseUrl);
-
-    // Validate backend URL
-    if (
-      this.backendBaseUrl.includes("localhost") &&
-      process.env.NODE_ENV === "production"
-    ) {
-      console.warn("⚠️ Using localhost URL in production environment");
-    } else {
-      console.log("✅ Backend URL configured correctly");
-    }
-
-    // Log React environment variables for debugging
-    const reactEnvVars = Object.keys(process.env).filter((key) =>
-      key.startsWith("REACT_APP_")
-    );
-    console.log("📋 React Environment Variables:", reactEnvVars.length);
-    reactEnvVars.forEach((key) => {
-      console.log(`   ${key}: ${process.env[key]}`);
-    });
 
     // Cache time-to-live settings
     this.cacheTTL = {
@@ -105,7 +88,7 @@ class InstitutionalDataService {
 
   async makeDirectApiCall(endpoint, options = {}) {
     const url = this.backendBaseUrl + endpoint;
-    const timeout = options.timeout || 20000; // Increased timeout for CORS issues
+    const timeout = options.timeout || 20000;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -118,200 +101,368 @@ class InstitutionalDataService {
           Accept: "application/json",
           "X-Client-Version": this.version,
           "Cache-Control": "no-cache",
-          // Add Origin header for CORS debugging
           Origin: window.location.origin,
           ...options.headers,
         },
-        mode: "cors", // Explicitly set CORS mode
+        mode: "cors",
         cache: "no-cache",
-        credentials: "omit", // Don't send cookies
+        credentials: "omit",
         signal: controller.signal,
         ...options,
       };
 
-      console.log(`🌐 Attempting fetch to: ${url}`);
-      console.log(`📋 Request options:`, {
-        method: requestOptions.method,
-        mode: requestOptions.mode,
-        credentials: requestOptions.credentials,
-        headers: requestOptions.headers,
-      });
-
+      console.log(`🌐 Fetch to: ${url}`);
       const response = await fetch(url, requestOptions);
       clearTimeout(timeoutId);
 
-      console.log(
-        `📡 Response status: ${response.status} ${response.statusText}`
-      );
-      console.log(
-        `📋 Response headers:`,
-        Object.fromEntries(response.headers.entries())
-      );
+      console.log(`📡 Response: ${response.status} ${response.statusText}`);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
       const data = await response.json();
-      console.log(`✅ Response data received:`, Object.keys(data));
+      this.requestCount++;
+      this.lastRequestTime = Date.now();
+
       return data;
     } catch (error) {
       clearTimeout(timeoutId);
-      console.error(`❌ Fetch error details:`, {
-        message: error.message,
-        name: error.name,
-        stack: error.stack?.substring(0, 200),
-      });
+      console.error(`❌ API call failed for ${endpoint}:`, error.message);
       throw error;
     }
   }
 
-  async makeApiCall(endpoint, options = {}) {
-    // Ensure initialization before making API calls
-    await this.ensureInitialized();
+  // ENHANCED: Comprehensive data extraction with deep debugging
+  async screenAllStocks(options = {}) {
+    console.log("🔍 Starting stock screening with options:", options);
 
-    const maxRetries = 2; // Reduced retries for faster debugging
-    let attempt = 0;
+    try {
+      await this.ensureInitialized();
 
-    this.requestCount++;
-    this.lastRequestTime = Date.now();
+      const startTime = Date.now();
+      const response = await this.makeDirectApiCall("/api/screening");
+      const duration = Date.now() - startTime;
 
-    while (attempt < maxRetries) {
-      try {
-        console.log(
-          `📡 API Call v${this.version} (attempt ${attempt + 1}): ${endpoint}`
-        );
+      console.log(`✅ API Success: /api/screening`);
+      console.log(`✅ Screening completed in ${duration}ms`);
 
-        const data = await this.makeDirectApiCall(endpoint, options);
-        console.log(`✅ API Success: ${endpoint}`);
-        return data;
-      } catch (error) {
-        attempt++;
-        console.warn(
-          `⚠️ API attempt ${attempt} failed for ${endpoint}:`,
-          error.message
-        );
+      // COMPREHENSIVE DEBUG: Log everything about the response
+      console.log("🔍 === RESPONSE DEBUGGING ===");
+      console.log("Response type:", typeof response);
+      console.log("Response is array:", Array.isArray(response));
+      console.log("Response keys:", response ? Object.keys(response) : "none");
+      console.log("Raw response structure:", JSON.stringify(response, null, 2));
 
-        if (attempt >= maxRetries) {
-          console.error(
-            `❌ API call failed after ${maxRetries} attempts: ${endpoint}`
-          );
-          throw new Error(`API call failed: ${this.formatError(error)}`);
+      // ENHANCED DATA EXTRACTION: Multiple strategies with detailed logging
+      let stocksData = [];
+      let processedCount = 0;
+      let successRate = 0;
+
+      if (response && typeof response === "object") {
+        // Strategy 1: Look for 'stocks' array
+        if (response.stocks && Array.isArray(response.stocks)) {
+          stocksData = response.stocks;
+          console.log("✅ Strategy 1: Found stocks in response.stocks");
+          console.log(`   Array length: ${stocksData.length}`);
+          console.log(`   First item:`, stocksData[0]);
+        }
+        // Strategy 2: Look for 'results' array
+        else if (response.results && Array.isArray(response.results)) {
+          stocksData = response.results;
+          console.log("✅ Strategy 2: Found stocks in response.results");
+          console.log(`   Array length: ${stocksData.length}`);
+          console.log(`   First item:`, stocksData[0]);
+        }
+        // Strategy 3: Look for 'data' array
+        else if (response.data && Array.isArray(response.data)) {
+          stocksData = response.data;
+          console.log("✅ Strategy 3: Found stocks in response.data");
+          console.log(`   Array length: ${stocksData.length}`);
+          console.log(`   First item:`, stocksData[0]);
+        }
+        // Strategy 4: Response itself is array
+        else if (Array.isArray(response)) {
+          stocksData = response;
+          console.log("✅ Strategy 4: Response is array directly");
+          console.log(`   Array length: ${stocksData.length}`);
+          console.log(`   First item:`, stocksData[0]);
+        }
+        // Strategy 5: Deep search for any array containing stock-like objects
+        else {
+          console.log("🔍 Strategy 5: Deep searching for stock data...");
+
+          const findStockArrays = (obj, path = "") => {
+            const arrays = [];
+
+            if (Array.isArray(obj)) {
+              // Check if this array contains stock-like objects
+              if (obj.length > 0 && obj[0] && typeof obj[0] === "object") {
+                const firstItem = obj[0];
+                const hasStockFields =
+                  firstItem.symbol ||
+                  firstItem.ticker ||
+                  firstItem.price ||
+                  firstItem.currentPrice ||
+                  firstItem.nissScore ||
+                  firstItem.score;
+                if (hasStockFields) {
+                  arrays.push({ path, data: obj, length: obj.length });
+                }
+              }
+            } else if (obj && typeof obj === "object") {
+              for (const [key, value] of Object.entries(obj)) {
+                const subArrays = findStockArrays(
+                  value,
+                  path ? `${path}.${key}` : key
+                );
+                arrays.push(...subArrays);
+              }
+            }
+
+            return arrays;
+          };
+
+          const foundArrays = findStockArrays(response);
+          console.log("🔍 Found potential stock arrays:", foundArrays);
+
+          if (foundArrays.length > 0) {
+            // Use the largest array found
+            const bestArray = foundArrays.reduce((best, current) =>
+              current.length > best.length ? current : best
+            );
+            stocksData = bestArray.data;
+            console.log(
+              `✅ Strategy 5: Using array at ${bestArray.path} with ${bestArray.length} items`
+            );
+            console.log(`   First item:`, stocksData[0]);
+          }
         }
 
-        // Shorter wait for CORS debugging
-        const delay = 1000;
-        await new Promise((resolve) => setTimeout(resolve, delay));
+        // Extract summary information with detailed logging
+        if (response.summary) {
+          processedCount =
+            response.summary.totalProcessed ||
+            response.summary.processed ||
+            response.summary.totalRequested ||
+            0;
+          successRate = response.summary.successRate || 0;
+          console.log("📊 Summary found:", response.summary);
+        } else {
+          console.log("⚠️ No summary object found in response");
+        }
+
+        console.log(
+          `📊 Stocks processed: ${processedCount || stocksData.length}`
+        );
+        console.log(`📈 Success rate: ${successRate}%`);
+        console.log(`🎯 Stocks data extracted: ${stocksData.length} items`);
+
+        if (stocksData.length === 0) {
+          console.error("❌ === NO STOCK DATA FOUND ===");
+          console.error("Full response for manual inspection:");
+          console.error(response);
+          console.error("=== END RESPONSE DEBUG ===");
+          return [];
+        }
+
+        // Enhanced validation and normalization with detailed logging
+        console.log("🔧 Starting data normalization...");
+        const normalizedStocks = [];
+
+        for (let i = 0; i < stocksData.length; i++) {
+          const stock = stocksData[i];
+          console.log(
+            `Processing stock ${i + 1}/${stocksData.length}:`,
+            stock?.symbol || stock?.ticker || "UNKNOWN"
+          );
+
+          if (!stock || typeof stock !== "object") {
+            console.warn(`⚠️ Stock ${i} is invalid (not object):`, stock);
+            continue;
+          }
+
+          const normalized = this.normalizeStockData(stock);
+          if (normalized !== null) {
+            normalizedStocks.push(normalized);
+            console.log(
+              `✅ Stock ${i + 1} normalized successfully: ${normalized.symbol}`
+            );
+          } else {
+            console.warn(`❌ Stock ${i + 1} normalization failed`);
+          }
+        }
+
+        console.log(
+          `✅ Normalized stocks: ${normalizedStocks.length} valid items`
+        );
+
+        if (normalizedStocks.length === 0) {
+          console.error("❌ === NORMALIZATION FAILED ===");
+          console.error("Sample raw stock data:");
+          console.error(stocksData.slice(0, 3));
+          console.error("=== END NORMALIZATION DEBUG ===");
+        }
+
+        return normalizedStocks;
       }
-    }
-  }
 
-  // MAIN API METHODS
-
-  async getHealthReport() {
-    try {
-      const response = await this.makeApiCall("/api/health");
-      return {
-        overall: "HEALTHY",
-        version: response.version || this.version,
-        backend: response,
-        cache: {
-          size: this.cache.size,
-          maxSize: 1000,
-        },
-        dataSource: "BACKEND_v4.0.0",
-        timestamp: new Date().toISOString(),
-        backendHealth: true,
-      };
+      console.warn("⚠️ Unexpected response structure:", typeof response);
+      console.error("❌ Full response:", response);
+      return [];
     } catch (error) {
-      console.warn("Health check failed:", error.message);
-      return {
-        overall: "DEGRADED",
-        version: this.version,
-        error: error.message,
-        cache: {
-          size: this.cache.size,
-          maxSize: 1000,
-        },
-        dataSource: "UNAVAILABLE",
-        timestamp: new Date().toISOString(),
-        backendHealth: false,
-      };
-    }
-  }
-
-  async screenAllStocks(options = {}) {
-    const cacheKey = `screening_${JSON.stringify(options)}`;
-    const cached = this.getFromCache(cacheKey, this.cacheTTL.screening);
-
-    if (cached) {
-      console.log("📦 Using cached screening results");
-      return cached;
-    }
-
-    try {
-      console.log("🔍 Starting stock screening...");
-      const startTime = Date.now();
-
-      const response = await this.makeApiCall("/api/screening", {
-        method: "POST",
-        body: JSON.stringify(options),
-      });
-
-      const processingTime = Date.now() - startTime;
-      console.log(`✅ Screening completed in ${processingTime}ms`);
-      console.log(
-        `📊 Stocks processed: ${response.summary?.totalProcessed || 0}`
-      );
-      console.log(`📈 Success rate: ${response.summary?.successRate || 0}%`);
-
-      // Transform response to expected format
-      const results = (response.results || []).map((stock) => ({
-        symbol: stock.symbol,
-        currentPrice: stock.price || stock.currentPrice || 0,
-        changePercent: stock.changePercent || stock.change || 0,
-        nissScore: stock.nissScore || this.generateMockNISSScore(),
-        confidence: stock.confidence || "MEDIUM",
-        sector: stock.sector || "Unknown",
-        marketCap: stock.marketCap,
-        volume: stock.volume,
-        dataSource: stock.dataSource || "backend",
-        lastUpdate: new Date().toISOString(),
-      }));
-
-      this.setCache(cacheKey, results, this.cacheTTL.screening);
-      return results;
-    } catch (error) {
-      console.error("❌ Screening failed:", error.message);
+      console.error("❌ Stock screening failed:", error.message);
       throw new Error(`Stock screening failed: ${error.message}`);
     }
   }
 
-  async getMarketContext() {
-    const cacheKey = "marketContext";
-    const cached = this.getFromCache(cacheKey, this.cacheTTL.marketContext);
-
-    if (cached) {
-      return cached;
-    }
-
+  // ENHANCED: Comprehensive stock data normalization with detailed field mapping
+  normalizeStockData(stock) {
     try {
-      const response = await this.makeApiCall("/api/market-context");
+      console.log(
+        "🔧 Normalizing stock:",
+        stock?.symbol || stock?.ticker || "UNKNOWN"
+      );
 
-      const context = {
-        volatility: response.volatility || "NORMAL",
-        trend: response.trend || "NEUTRAL",
-        breadth: response.breadth || "MIXED",
-        spyChange: response.spyChange || 0,
-        vix: response.vix || 20,
-        lastUpdate: new Date(),
-        dataSource: "REAL",
+      // Enhanced field mapping with comprehensive fallbacks
+      const normalized = {
+        // Core identifiers - try all possible field names
+        symbol:
+          stock.symbol || stock.ticker || stock.stock || stock.name || null,
+
+        // NISS score - multiple possible field names
+        nissScore: parseFloat(
+          stock.nissScore || stock.niss || stock.score || stock.rating || 0
+        ),
+
+        // Confidence levels - various formats
+        confidence:
+          stock.confidence ||
+          stock.level ||
+          stock.grade ||
+          stock.rating ||
+          "MEDIUM",
+
+        // Price data - comprehensive mapping
+        currentPrice: parseFloat(
+          stock.currentPrice ||
+            stock.price ||
+            stock.last ||
+            stock.close ||
+            stock.c ||
+            0
+        ),
+        change: parseFloat(
+          stock.change || stock.priceChange || stock.netChange || stock.d || 0
+        ),
+        changePercent: parseFloat(
+          stock.changePercent ||
+            stock.changesPercentage ||
+            stock.percentChange ||
+            stock.pctChange ||
+            stock.dp ||
+            0
+        ),
+
+        // Volume and market data
+        volume: parseInt(stock.volume || stock.vol || stock.v || 0),
+        avgVolume: parseInt(
+          stock.avgVolume ||
+            stock.averageVolume ||
+            stock.avgVol ||
+            stock.volume ||
+            0
+        ),
+        marketCap: parseInt(
+          stock.marketCap || stock.market_cap || stock.mcap || 0
+        ),
+
+        // OHLC data
+        high: parseFloat(stock.high || stock.dayHigh || stock.h || 0),
+        low: parseFloat(stock.low || stock.dayLow || stock.l || 0),
+        open: parseFloat(stock.open || stock.o || 0),
+
+        // News and sentiment data
+        newsCount: parseInt(
+          stock.newsCount || stock.articles || stock.news || 0
+        ),
+        sentiment:
+          stock.sentiment || stock.direction || stock.trend || "NEUTRAL",
+
+        // Sector and classification
+        sector: stock.sector || stock.industry || stock.category || "Unknown",
+
+        // Catalyst information
+        catalysts: stock.catalysts || stock.events || stock.news || [],
+
+        // Metadata
+        lastUpdated:
+          stock.lastUpdated || stock.timestamp || new Date().toISOString(),
+        source: stock.source || stock.dataSource || "backend-v4.0.0",
+
+        // Keep original data for debugging
+        rawData: stock,
       };
 
-      this.setCache(cacheKey, context, this.cacheTTL.marketContext);
-      return context;
+      // Validation with detailed logging
+      if (!normalized.symbol) {
+        console.warn("⚠️ Stock missing symbol. Raw data:", stock);
+        console.warn("   Tried fields: symbol, ticker, stock, name");
+        return null;
+      }
+
+      // Ensure numeric fields are valid numbers
+      if (isNaN(normalized.nissScore)) {
+        console.warn(
+          `⚠️ Invalid NISS score for ${normalized.symbol}, defaulting to 0`
+        );
+        normalized.nissScore = 0;
+      }
+
+      if (isNaN(normalized.currentPrice)) {
+        console.warn(
+          `⚠️ Invalid price for ${normalized.symbol}, defaulting to 0`
+        );
+        normalized.currentPrice = 0;
+      }
+
+      console.log(
+        `✅ Successfully normalized ${normalized.symbol}: NISS=${normalized.nissScore}, Price=${normalized.currentPrice}`
+      );
+      return normalized;
     } catch (error) {
-      console.warn("Market context failed, using defaults:", error.message);
+      console.error("❌ Error normalizing stock data:", error);
+      console.error("   Stock data was:", stock);
+      return null;
+    }
+  }
+
+  // ENHANCED: Market context with comprehensive error handling
+  async getMarketContext() {
+    try {
+      await this.ensureInitialized();
+      console.log("📈 Loading market context...");
+
+      const response = await this.makeDirectApiCall("/api/market-context");
+
+      if (response && typeof response === "object") {
+        const context = {
+          volatility: response.volatility || "NORMAL",
+          trend: response.trend || "NEUTRAL",
+          breadth: response.breadth || "MIXED",
+          spyChange: parseFloat(response.spyChange || 0),
+          vix: parseFloat(response.vix || 20),
+          lastUpdate: response.lastUpdate || new Date(),
+          dataSource: response.dataSource || "REAL",
+          ...response,
+        };
+
+        console.log("✅ Market context loaded:", context);
+        return context;
+      }
+
+      // Return default context if backend doesn't have market data
+      console.log("⚠️ Using default market context");
       return {
         volatility: "NORMAL",
         trend: "NEUTRAL",
@@ -321,97 +472,67 @@ class InstitutionalDataService {
         lastUpdate: new Date(),
         dataSource: "DEFAULT",
       };
-    }
-  }
-
-  // CACHE MANAGEMENT
-
-  setCache(key, data, ttl) {
-    try {
-      this.cache.set(key, {
-        data,
-        timestamp: Date.now(),
-        ttl,
-      });
-
-      // Limit cache size to prevent memory issues
-      if (this.cache.size > 1000) {
-        const firstKey = this.cache.keys().next().value;
-        this.cache.delete(firstKey);
-      }
     } catch (error) {
-      console.warn("Cache write failed:", error);
+      console.warn(
+        "⚠️ Market context unavailable, using defaults:",
+        error.message
+      );
+      return {
+        volatility: "NORMAL",
+        trend: "NEUTRAL",
+        breadth: "MIXED",
+        spyChange: 0,
+        vix: 20,
+        lastUpdate: new Date(),
+        dataSource: "FALLBACK",
+      };
     }
   }
 
-  getFromCache(key, ttl) {
+  // ENHANCED: Health report with comprehensive status
+  async getHealthReport() {
     try {
-      const cached = this.cache.get(key);
-      if (!cached) return null;
+      const response = await this.makeDirectApiCall("/api/health");
 
-      const age = Date.now() - cached.timestamp;
-      if (age > ttl) {
-        this.cache.delete(key);
-        return null;
+      if (response && response.version) {
+        return {
+          overall: "HEALTHY",
+          version: response.version,
+          apis: response.apis || {},
+          summary: response.summary || {},
+          uptime: response.uptime || "unknown",
+          error: null,
+        };
       }
 
-      return cached.data;
+      throw new Error("Invalid health response");
     } catch (error) {
-      console.warn("Cache read failed:", error);
-      return null;
+      return {
+        overall: "UNHEALTHY",
+        version: "unknown",
+        apis: {},
+        summary: {},
+        uptime: "unknown",
+        error: error.message,
+      };
     }
   }
 
+  // Utility methods
   clearCache() {
-    try {
-      const size = this.cache.size;
-      this.cache.clear();
-      console.log(`🧹 Cache cleared (${size} entries)`);
-    } catch (error) {
-      console.warn("Cache clear failed:", error);
-    }
-  }
-
-  // UTILITY METHODS
-
-  generateMockNISSScore() {
-    // Generate a realistic NISS score between -100 and 100
-    return Math.round((Math.random() * 200 - 100) * 10) / 10;
-  }
-
-  formatError(error) {
-    if (error.name === "AbortError") {
-      return "Request timed out. Please check your connection.";
-    }
-    if (error.message.includes("Failed to fetch")) {
-      return "CORS or network error. Backend may need CORS configuration update.";
-    }
-    if (error.message.includes("404")) {
-      return "Data endpoint not found.";
-    }
-    if (error.message.includes("500")) {
-      return "Backend service error. Please try again.";
-    }
-    return error.message || "An unexpected error occurred.";
+    this.cache.clear();
+    console.log("🗑️ Cache cleared");
   }
 
   getDebugInfo() {
     return {
       version: this.version,
       initialized: this.initialized,
-      initializing: this.initializing,
       backendUrl: this.backendBaseUrl,
       cacheSize: this.cache.size,
       requestCount: this.requestCount,
       lastRequestTime: new Date(this.lastRequestTime).toISOString(),
       environment: process.env.NODE_ENV,
-      backendAvailable: this.initialized,
-      expectedFeatures: [
-        "CORS debugging enabled",
-        "Backend v4.0.0 integration",
-        "Enhanced error logging",
-        "Graceful error handling",
-      ],
     };
   }
 
@@ -421,7 +542,7 @@ class InstitutionalDataService {
       console.log("🧪 Testing backend connection...");
       const startTime = Date.now();
 
-      const health = await this.makeApiCall("/api/health");
+      const health = await this.makeDirectApiCall("/api/health");
       const connectionTime = Date.now() - startTime;
 
       console.log(`✅ Connection test passed in ${connectionTime}ms`);
@@ -440,6 +561,34 @@ class InstitutionalDataService {
       };
     }
   }
+
+  // DEBUG HELPER: Manual response inspection
+  async debugScreeningResponse() {
+    try {
+      console.log("🐛 === MANUAL SCREENING DEBUG ===");
+      const response = await this.makeDirectApiCall("/api/screening");
+
+      console.log("Response type:", typeof response);
+      console.log("Response keys:", Object.keys(response || {}));
+      console.log("Full response:", response);
+
+      if (response?.stocks) {
+        console.log("Stocks array length:", response.stocks.length);
+        console.log("First stock:", response.stocks[0]);
+      }
+
+      if (response?.results) {
+        console.log("Results array length:", response.results.length);
+        console.log("First result:", response.results[0]);
+      }
+
+      console.log("🐛 === END DEBUG ===");
+      return response;
+    } catch (error) {
+      console.error("Debug failed:", error);
+      return null;
+    }
+  }
 }
 
 // Create and export singleton instance
@@ -448,6 +597,8 @@ const institutionalDataService = new InstitutionalDataService();
 // Add debug helper to window for development
 if (process.env.NODE_ENV === "development") {
   window._dataService = institutionalDataService;
+  console.log("🐛 Debug helper available: window._dataService");
+  console.log("   Try: window._dataService.debugScreeningResponse()");
 }
 
 export default institutionalDataService;

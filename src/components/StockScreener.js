@@ -1,558 +1,550 @@
-// src/components/StockScreener.js - FIXED VERSION FOR DATA DISPLAY
-// Replace your StockScreener.js with this version
+// src/components/StockScreener.js - FIXED VERSION
+// COMPLETE REPLACEMENT - This fixes prop mapping and data display
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useMemo } from "react";
 import {
-  Search,
-  Filter,
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
   TrendingUp,
   TrendingDown,
+  AlertCircle,
   Eye,
   Star,
-  StarOff,
-  Download,
-  RefreshCw,
-  Activity,
-  BarChart3,
-  DollarSign,
-  Volume2,
-  AlertCircle,
-  CheckCircle,
-  Info,
-  Zap,
-  Target,
+  Filter,
 } from "lucide-react";
 
 const StockScreener = ({
-  // Data props - renamed to match what NewsImpactScreener sends
-  stockData = [],
-
-  // State props
+  screeningResults = [], // FIXED: Changed from 'stocks' to 'screeningResults'
+  onSelectStock = () => {},
+  watchlist = [],
+  onToggleWatchlist = () => {},
   loading = false,
   error = null,
-  searchQuery = "",
-  onSearchChange,
-  filters = {},
-  onFiltersChange,
-  sortBy = "nissScore",
-  onSortChange,
-  sortDirection = "desc",
-  onSortDirectionChange,
-  selectedStock,
-  onStockSelect,
-
-  // Action props
-  onRefresh,
-  watchlist = [],
-  onWatchlistToggle,
-
-  // Additional props
-  availableSectors = [],
-  marketContext = {},
 }) => {
-  console.log(
-    "🎯 StockScreener render - Data received:",
-    stockData.length,
-    "stocks"
-  );
+  console.log("🔍 StockScreener receiving data:", {
+    resultCount: screeningResults.length,
+    sampleData: screeningResults.slice(0, 2),
+    loading,
+    error,
+  });
 
-  // ============================================
-  // LOCAL STATE
-  // ============================================
-  const [selectedStocks, setSelectedStocks] = useState(new Set());
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  // Filter and sort state
+  const [filters, setFilters] = useState({
+    confidence: "ALL", // ALL, HIGH, MEDIUM, LOW
+    sentiment: "ALL", // ALL, BULLISH, BEARISH, NEUTRAL
+    nissThreshold: 0, // Minimum NISS score
+    sortBy: "nissScore", // nissScore, change, volume, symbol
+    sortOrder: "desc", // desc, asc
+  });
 
-  // ============================================
-  // DATA PROCESSING
-  // ============================================
+  const [showFilters, setShowFilters] = useState(false);
 
-  // Process and filter stocks
-  const processedStocks = useMemo(() => {
-    console.log("📊 Processing stocks:", stockData.length);
-
-    if (!stockData || stockData.length === 0) {
-      console.log("⚠️ No stock data available");
+  // Memoized filtered and sorted results
+  const filteredResults = useMemo(() => {
+    if (!Array.isArray(screeningResults) || screeningResults.length === 0) {
+      console.log("⚠️ No valid screening results to filter");
       return [];
     }
 
-    // Apply search filter
-    let filtered = stockData.filter((stock) => {
-      if (!searchQuery) return true;
-      return (
-        stock.symbol?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        stock.sector?.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-    });
-
-    // Apply other filters
-    if (filters.sector && filters.sector !== "all") {
-      filtered = filtered.filter((stock) => stock.sector === filters.sector);
-    }
-
-    if (filters.confidence && filters.confidence !== "all") {
-      filtered = filtered.filter(
-        (stock) => stock.confidence === filters.confidence
-      );
-    }
-
-    // Apply NISS score range filter
-    if (filters.nissRange && filters.nissRange !== "all") {
-      filtered = filtered.filter((stock) => {
-        const score = Math.abs(stock.nissScore || 0);
-        switch (filters.nissRange) {
-          case "high":
-            return score >= 70;
-          case "medium":
-            return score >= 40 && score < 70;
-          case "low":
-            return score < 40;
-          default:
-            return true;
-        }
-      });
-    }
-
-    console.log("📋 Filtered stocks:", filtered.length);
-    return filtered;
-  }, [stockData, searchQuery, filters]);
-
-  // Sort stocks
-  const sortedStocks = useMemo(() => {
-    if (processedStocks.length === 0) return [];
-
-    const sorted = [...processedStocks].sort((a, b) => {
-      let aValue = a[sortBy];
-      let bValue = b[sortBy];
-
-      // Handle different data types
+    let filtered = screeningResults.filter((stock) => {
+      // Confidence filter
       if (
-        sortBy === "nissScore" ||
-        sortBy === "currentPrice" ||
-        sortBy === "changePercent"
+        filters.confidence !== "ALL" &&
+        stock.confidence !== filters.confidence
       ) {
-        aValue = parseFloat(aValue) || 0;
-        bValue = parseFloat(bValue) || 0;
-      } else if (typeof aValue === "string") {
-        aValue = aValue.toLowerCase();
-        bValue = (bValue || "").toLowerCase();
+        return false;
       }
 
-      if (sortDirection === "desc") {
-        return bValue > aValue ? 1 : -1;
-      } else {
-        return aValue > bValue ? 1 : -1;
+      // Sentiment filter
+      if (filters.sentiment !== "ALL") {
+        const stockSentiment = determineSentiment(stock);
+        if (stockSentiment !== filters.sentiment) {
+          return false;
+        }
       }
+
+      // NISS threshold filter
+      if ((stock.nissScore || 0) < filters.nissThreshold) {
+        return false;
+      }
+
+      return true;
     });
 
-    console.log("🔄 Sorted stocks:", sorted.length);
-    return sorted;
-  }, [processedStocks, sortBy, sortDirection]);
+    // Sort results
+    filtered.sort((a, b) => {
+      let aVal = a[filters.sortBy] || 0;
+      let bVal = b[filters.sortBy] || 0;
 
-  // ============================================
-  // EVENT HANDLERS
-  // ============================================
-
-  const handleSort = useCallback(
-    (field) => {
-      if (sortBy === field) {
-        onSortDirectionChange?.(sortDirection === "desc" ? "asc" : "desc");
-      } else {
-        onSortChange?.(field);
-        onSortDirectionChange?.("desc");
+      // Handle special sorting cases
+      if (filters.sortBy === "symbol") {
+        aVal = (a.symbol || "").toString();
+        bVal = (b.symbol || "").toString();
+        return filters.sortOrder === "desc"
+          ? bVal.localeCompare(aVal)
+          : aVal.localeCompare(bVal);
       }
-    },
-    [sortBy, sortDirection, onSortChange, onSortDirectionChange]
-  );
 
-  const clearAllFilters = useCallback(() => {
-    onSearchChange?.("");
-    onFiltersChange?.({
-      nissRange: "all",
-      confidence: "all",
-      marketCap: "all",
-      sector: "all",
-      volume: "all",
-      timeframe: "24h",
+      // Numeric sorting
+      const numA = parseFloat(aVal) || 0;
+      const numB = parseFloat(bVal) || 0;
+
+      return filters.sortOrder === "desc" ? numB - numA : numA - numB;
     });
-  }, [onSearchChange, onFiltersChange]);
 
-  // ============================================
-  // UTILITY FUNCTIONS
-  // ============================================
+    console.log(
+      `✅ Filtered ${filtered.length} stocks from ${screeningResults.length} total`
+    );
+    return filtered;
+  }, [screeningResults, filters]);
 
-  const getNissColor = (score) => {
-    const absScore = Math.abs(score || 0);
-    if (absScore >= 70) return "text-red-600 bg-red-50";
-    if (absScore >= 40) return "text-yellow-600 bg-yellow-50";
-    return "text-green-600 bg-green-50";
+  // Helper function to determine sentiment from stock data
+  const determineSentiment = (stock) => {
+    if (stock.sentiment && typeof stock.sentiment === "string") {
+      return stock.sentiment.toUpperCase();
+    }
+
+    // Infer sentiment from price change
+    const change = stock.change || stock.changePercent || 0;
+    if (change > 1) return "BULLISH";
+    if (change < -1) return "BEARISH";
+    return "NEUTRAL";
   };
 
-  const getChangeColor = (change) => {
-    if (change > 0) return "text-green-600";
-    if (change < 0) return "text-red-600";
+  // Helper function to get confidence color
+  const getConfidenceColor = (confidence) => {
+    switch (confidence?.toUpperCase()) {
+      case "HIGH":
+        return "text-green-600 bg-green-100";
+      case "MEDIUM":
+        return "text-yellow-600 bg-yellow-100";
+      case "LOW":
+        return "text-red-600 bg-red-100";
+      default:
+        return "text-gray-600 bg-gray-100";
+    }
+  };
+
+  // Helper function to get NISS score color
+  const getNissScoreColor = (score) => {
+    const numScore = parseFloat(score) || 0;
+    if (numScore >= 8) return "text-green-600 font-bold";
+    if (numScore >= 6) return "text-yellow-600 font-medium";
+    if (numScore >= 4) return "text-orange-600";
     return "text-gray-600";
   };
 
-  const formatPrice = (price) => {
-    return price ? `$${parseFloat(price).toFixed(2)}` : "N/A";
-  };
+  // Helper function to format price change
+  const formatChange = (change, isPercent = false) => {
+    const num = parseFloat(change) || 0;
+    const formatted = isPercent ? `${num.toFixed(2)}%` : `$${num.toFixed(2)}`;
+    const colorClass = num >= 0 ? "text-green-600" : "text-red-600";
+    const icon =
+      num >= 0 ? (
+        <TrendingUp className="inline w-3 h-3" />
+      ) : (
+        <TrendingDown className="inline w-3 h-3" />
+      );
 
-  const formatPercent = (percent) => {
-    return percent ? `${parseFloat(percent).toFixed(2)}%` : "0.00%";
-  };
-
-  // ============================================
-  // RENDER COMPONENTS
-  // ============================================
-
-  // Sort icon component
-  const SortIcon = ({ field }) => {
-    if (sortBy !== field) {
-      return <ArrowUpDown className="h-4 w-4 text-gray-400" />;
-    }
-    return sortDirection === "desc" ? (
-      <ArrowDown className="h-4 w-4 text-blue-600" />
-    ) : (
-      <ArrowUp className="h-4 w-4 text-blue-600" />
-    );
-  };
-
-  // Loading state
-  if (loading && sortedStocks.length === 0) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center justify-center">
-          <RefreshCw className="h-6 w-6 animate-spin text-blue-600 mr-3" />
-          <span className="text-lg font-medium text-gray-900">
-            Loading stock data...
-          </span>
-        </div>
-      </div>
+      <span className={colorClass}>
+        {icon} {formatted}
+      </span>
     );
-  }
+  };
 
   // Error state
   if (error) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center text-red-600">
-          <AlertCircle className="h-6 w-6 mr-3" />
-          <div>
-            <h3 className="text-lg font-medium">Error Loading Data</h3>
-            <p className="text-sm text-red-500 mt-1">{error}</p>
-          </div>
+      <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+        <div className="flex items-center space-x-2 text-red-800">
+          <AlertCircle className="w-5 h-5" />
+          <h3 className="font-medium">Screening Error</h3>
         </div>
+        <p className="text-red-700 mt-2">{error}</p>
       </div>
     );
   }
 
-  // Empty state
-  if (!loading && sortedStocks.length === 0) {
+  // Loading state
+  if (loading) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="text-center">
-          <BarChart3 className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">
-            No stocks match your criteria
-          </h3>
-          <p className="text-gray-600 mb-4">
-            Try adjusting your filters or search terms
-          </p>
-          <button
-            onClick={clearAllFilters}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-          >
-            Clear All Filters
-          </button>
+      <div className="space-y-4">
+        <div className="flex items-center justify-center py-12">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          <span className="ml-2 text-gray-600">Screening stocks...</span>
         </div>
       </div>
     );
   }
 
-  // ============================================
-  // MAIN RENDER
-  // ============================================
+  // No data state
+  if (!Array.isArray(screeningResults) || screeningResults.length === 0) {
+    return (
+      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
+        <div className="flex items-center space-x-2 text-yellow-800">
+          <AlertCircle className="w-5 h-5" />
+          <h3 className="font-medium">No Data Available</h3>
+        </div>
+        <p className="text-yellow-700 mt-2">
+          No screening results found. Please check your backend connection and
+          try refreshing.
+        </p>
+        <div className="mt-4 text-sm text-yellow-600">
+          <p>Debugging info:</p>
+          <p>• Screening results type: {typeof screeningResults}</p>
+          <p>
+            • Results length:{" "}
+            {Array.isArray(screeningResults)
+              ? screeningResults.length
+              : "Not an array"}
+          </p>
+          <p>
+            • Backend connected:{" "}
+            {loading ? "Checking..." : "Check console for connection status"}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      {/* Header with summary */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-6">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-bold text-gray-900">Stock Screener</h2>
-          <div className="flex items-center space-x-4">
-            <div className="text-sm text-gray-600">
-              Showing {sortedStocks.length} of {stockData.length} stocks
-            </div>
-            {onRefresh && (
-              <button
-                onClick={onRefresh}
-                disabled={loading}
-                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center"
-              >
-                <RefreshCw
-                  className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
-                />
-                Refresh
-              </button>
-            )}
-          </div>
+      {/* Header with Stats and Filters */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
+        <div className="flex items-center space-x-4">
+          <h2 className="text-xl font-semibold text-gray-900">
+            Stock Screener
+          </h2>
+          <span className="text-sm text-gray-500">
+            {filteredResults.length} of {screeningResults.length} stocks
+          </span>
         </div>
 
-        {/* Quick stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-white rounded-lg p-3">
-            <div className="text-sm text-gray-600">Total Stocks</div>
-            <div className="text-lg font-bold text-gray-900">
-              {stockData.length}
-            </div>
-          </div>
-          <div className="bg-white rounded-lg p-3">
-            <div className="text-sm text-gray-600">High Confidence</div>
-            <div className="text-lg font-bold text-green-600">
-              {stockData.filter((s) => s.confidence === "HIGH").length}
-            </div>
-          </div>
-          <div className="bg-white rounded-lg p-3">
-            <div className="text-sm text-gray-600">Bullish Signals</div>
-            <div className="text-lg font-bold text-green-600">
-              {stockData.filter((s) => (s.nissScore || 0) > 0).length}
-            </div>
-          </div>
-          <div className="bg-white rounded-lg p-3">
-            <div className="text-sm text-gray-600">Bearish Signals</div>
-            <div className="text-lg font-bold text-red-600">
-              {stockData.filter((s) => (s.nissScore || 0) < 0).length}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Search and filters */}
-      <div className="bg-white rounded-lg shadow p-4">
-        <div className="flex flex-col md:flex-row gap-4 mb-4">
-          {/* Search */}
-          <div className="flex-1">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search by symbol or sector..."
-                value={searchQuery}
-                onChange={(e) => onSearchChange?.(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-          </div>
-
-          {/* Sector filter */}
-          <select
-            value={filters.sector || "all"}
-            onChange={(e) =>
-              onFiltersChange?.({ ...filters, sector: e.target.value })
-            }
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="all">All Sectors</option>
-            {availableSectors.map((sector) => (
-              <option key={sector} value={sector}>
-                {sector}
-              </option>
-            ))}
-          </select>
-
-          {/* Confidence filter */}
-          <select
-            value={filters.confidence || "all"}
-            onChange={(e) =>
-              onFiltersChange?.({ ...filters, confidence: e.target.value })
-            }
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="all">All Confidence</option>
-            <option value="HIGH">High Confidence</option>
-            <option value="MEDIUM">Medium Confidence</option>
-            <option value="LOW">Low Confidence</option>
-          </select>
-
-          {/* Clear filters */}
+        <div className="flex items-center space-x-2">
           <button
-            onClick={clearAllFilters}
-            className="px-4 py-2 text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg"
+            onClick={() => setShowFilters(!showFilters)}
+            className={`flex items-center space-x-1 px-3 py-2 text-sm rounded-md border ${
+              showFilters
+                ? "bg-blue-50 border-blue-200 text-blue-700"
+                : "bg-white border-gray-300 text-gray-700 hover:bg-gray-50"
+            }`}
           >
-            Clear Filters
+            <Filter className="w-4 h-4" />
+            <span>Filters</span>
           </button>
         </div>
       </div>
 
-      {/* Results table */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
+      {/* Filter Panel */}
+      {showFilters && (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {/* Confidence Filter */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Confidence
+              </label>
+              <select
+                value={filters.confidence}
+                onChange={(e) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    confidence: e.target.value,
+                  }))
+                }
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              >
+                <option value="ALL">All Levels</option>
+                <option value="HIGH">High</option>
+                <option value="MEDIUM">Medium</option>
+                <option value="LOW">Low</option>
+              </select>
+            </div>
+
+            {/* Sentiment Filter */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Sentiment
+              </label>
+              <select
+                value={filters.sentiment}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, sentiment: e.target.value }))
+                }
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              >
+                <option value="ALL">All Sentiment</option>
+                <option value="BULLISH">Bullish</option>
+                <option value="BEARISH">Bearish</option>
+                <option value="NEUTRAL">Neutral</option>
+              </select>
+            </div>
+
+            {/* NISS Threshold */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Min NISS Score
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="10"
+                step="0.5"
+                value={filters.nissThreshold}
+                onChange={(e) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    nissThreshold: parseFloat(e.target.value),
+                  }))
+                }
+                className="w-full"
+              />
+              <div className="text-xs text-gray-500 mt-1">
+                {filters.nissThreshold}+
+              </div>
+            </div>
+
+            {/* Sort Options */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Sort By
+              </label>
+              <div className="flex space-x-1">
+                <select
+                  value={filters.sortBy}
+                  onChange={(e) =>
+                    setFilters((prev) => ({ ...prev, sortBy: e.target.value }))
+                  }
+                  className="flex-1 px-2 py-2 border border-gray-300 rounded-md text-sm"
+                >
+                  <option value="nissScore">NISS Score</option>
+                  <option value="change">Change %</option>
+                  <option value="volume">Volume</option>
+                  <option value="symbol">Symbol</option>
+                </select>
+                <button
+                  onClick={() =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      sortOrder: prev.sortOrder === "desc" ? "asc" : "desc",
+                    }))
+                  }
+                  className="px-2 py-2 border border-gray-300 rounded-md text-sm hover:bg-gray-50"
+                >
+                  {filters.sortOrder === "desc" ? "↓" : "↑"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Results Table */}
+      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
-            {/* Table header */}
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  <button
-                    onClick={() => handleSort("symbol")}
-                    className="flex items-center space-x-1 hover:text-gray-700"
-                  >
-                    <span>Symbol</span>
-                    <SortIcon field="symbol" />
-                  </button>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Symbol
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  <button
-                    onClick={() => handleSort("currentPrice")}
-                    className="flex items-center space-x-1 hover:text-gray-700"
-                  >
-                    <span>Price</span>
-                    <SortIcon field="currentPrice" />
-                  </button>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  NISS Score
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  <button
-                    onClick={() => handleSort("changePercent")}
-                    className="flex items-center space-x-1 hover:text-gray-700"
-                  >
-                    <span>Change %</span>
-                    <SortIcon field="changePercent" />
-                  </button>
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  <button
-                    onClick={() => handleSort("nissScore")}
-                    className="flex items-center space-x-1 hover:text-gray-700"
-                  >
-                    <span>NISS Score</span>
-                    <SortIcon field="nissScore" />
-                  </button>
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Confidence
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Sector
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Price
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Change
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  News
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
             </thead>
-
-            {/* Table body */}
             <tbody className="bg-white divide-y divide-gray-200">
-              {sortedStocks.map((stock, index) => (
-                <tr key={stock.symbol || index} className="hover:bg-gray-50">
-                  {/* Symbol */}
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <div className="font-medium text-gray-900">
-                        {stock.symbol}
-                      </div>
-                    </div>
-                  </td>
+              {filteredResults.map((stock, index) => {
+                const isInWatchlist = watchlist.some(
+                  (w) => w.symbol === stock.symbol
+                );
 
-                  {/* Price */}
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">
-                      {formatPrice(stock.currentPrice)}
-                    </div>
-                  </td>
-
-                  {/* Change % */}
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div
-                      className={`text-sm font-medium ${getChangeColor(
-                        stock.changePercent
-                      )}`}
-                    >
-                      {formatPercent(stock.changePercent)}
-                    </div>
-                  </td>
-
-                  {/* NISS Score */}
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span
-                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getNissColor(
-                        stock.nissScore
-                      )}`}
-                    >
-                      {(stock.nissScore || 0).toFixed(1)}
-                    </span>
-                  </td>
-
-                  {/* Confidence */}
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span
-                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        stock.confidence === "HIGH"
-                          ? "bg-green-100 text-green-800"
-                          : stock.confidence === "MEDIUM"
-                          ? "bg-yellow-100 text-yellow-800"
-                          : "bg-gray-100 text-gray-800"
-                      }`}
-                    >
-                      {stock.confidence || "LOW"}
-                    </span>
-                  </td>
-
-                  {/* Sector */}
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {stock.sector || "Unknown"}
-                  </td>
-
-                  {/* Actions */}
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <div className="flex items-center space-x-2">
-                      {/* Watchlist toggle */}
-                      <button
-                        onClick={() => onWatchlistToggle?.(stock.symbol)}
-                        className={`p-1 rounded hover:bg-gray-100 ${
-                          watchlist.includes(stock.symbol)
-                            ? "text-yellow-500"
-                            : "text-gray-400"
-                        }`}
-                      >
-                        {watchlist.includes(stock.symbol) ? (
-                          <Star className="h-4 w-4 fill-current" />
-                        ) : (
-                          <StarOff className="h-4 w-4" />
+                return (
+                  <tr
+                    key={stock.symbol || index}
+                    className="hover:bg-gray-50 cursor-pointer"
+                    onClick={() => onSelectStock(stock)}
+                  >
+                    {/* Symbol */}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-sm font-medium text-gray-900">
+                          {stock.symbol || "N/A"}
+                        </span>
+                        {isInWatchlist && (
+                          <Star className="w-4 h-4 text-yellow-500 fill-current" />
                         )}
-                      </button>
+                      </div>
+                    </td>
 
-                      {/* View details */}
-                      <button
-                        onClick={() => onStockSelect?.(stock)}
-                        className="p-1 rounded hover:bg-gray-100 text-blue-600"
+                    {/* NISS Score */}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <span
+                        className={`text-sm font-medium ${getNissScoreColor(
+                          stock.nissScore
+                        )}`}
                       >
-                        <Eye className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                        {(stock.nissScore || 0).toFixed(1)}
+                      </span>
+                    </td>
+
+                    {/* Confidence */}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <span
+                        className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getConfidenceColor(
+                          stock.confidence
+                        )}`}
+                      >
+                        {stock.confidence || "MEDIUM"}
+                      </span>
+                    </td>
+
+                    {/* Price */}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <span className="text-sm text-gray-900">
+                        ${(stock.currentPrice || 0).toFixed(2)}
+                      </span>
+                    </td>
+
+                    {/* Change */}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <div className="text-sm">
+                        {formatChange(stock.changePercent, true)}
+                      </div>
+                    </td>
+
+                    {/* News Count */}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <span className="text-sm text-gray-600">
+                        {stock.newsCount || 0} articles
+                      </span>
+                    </td>
+
+                    {/* Actions */}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectStock(stock);
+                          }}
+                          className="text-blue-600 hover:text-blue-800 text-sm"
+                          title="View Details"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleWatchlist(stock);
+                          }}
+                          className={`text-sm ${
+                            isInWatchlist
+                              ? "text-yellow-600 hover:text-yellow-800"
+                              : "text-gray-400 hover:text-yellow-600"
+                          }`}
+                          title={
+                            isInWatchlist
+                              ? "Remove from Watchlist"
+                              : "Add to Watchlist"
+                          }
+                        >
+                          <Star
+                            className={`w-4 h-4 ${
+                              isInWatchlist ? "fill-current" : ""
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
 
-        {/* Summary footer */}
-        {sortedStocks.length > 0 && (
-          <div className="bg-gray-50 px-6 py-3 border-t border-gray-200">
-            <div className="text-sm text-gray-600">
-              Displaying {sortedStocks.length} stocks • Avg NISS Score:{" "}
-              {(
-                sortedStocks.reduce(
-                  (sum, s) => sum + Math.abs(s.nissScore || 0),
-                  0
-                ) / sortedStocks.length
-              ).toFixed(1)}{" "}
-              • Data Source: {sortedStocks[0]?.dataSource || "backend"}
-            </div>
+        {/* Empty state for filtered results */}
+        {filteredResults.length === 0 && screeningResults.length > 0 && (
+          <div className="text-center py-8">
+            <p className="text-gray-500">
+              No stocks match your current filters.
+            </p>
+            <button
+              onClick={() =>
+                setFilters({
+                  confidence: "ALL",
+                  sentiment: "ALL",
+                  nissThreshold: 0,
+                  sortBy: "nissScore",
+                  sortOrder: "desc",
+                })
+              }
+              className="mt-2 text-blue-600 hover:text-blue-800 text-sm"
+            >
+              Clear all filters
+            </button>
           </div>
         )}
+      </div>
+
+      {/* Summary Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-white border border-gray-200 rounded-lg p-4">
+          <div className="text-sm text-gray-500">Avg NISS Score</div>
+          <div className="text-lg font-semibold text-gray-900">
+            {filteredResults.length > 0
+              ? (
+                  filteredResults.reduce(
+                    (sum, stock) => sum + (stock.nissScore || 0),
+                    0
+                  ) / filteredResults.length
+                ).toFixed(1)
+              : "0.0"}
+          </div>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-lg p-4">
+          <div className="text-sm text-gray-500">High Confidence</div>
+          <div className="text-lg font-semibold text-green-600">
+            {filteredResults.filter((s) => s.confidence === "HIGH").length}
+          </div>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-lg p-4">
+          <div className="text-sm text-gray-500">Bullish Signals</div>
+          <div className="text-lg font-semibold text-green-600">
+            {
+              filteredResults.filter((s) => determineSentiment(s) === "BULLISH")
+                .length
+            }
+          </div>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-lg p-4">
+          <div className="text-sm text-gray-500">In Watchlist</div>
+          <div className="text-lg font-semibold text-yellow-600">
+            {
+              filteredResults.filter((s) =>
+                watchlist.some((w) => w.symbol === s.symbol)
+              ).length
+            }
+          </div>
+        </div>
       </div>
     </div>
   );

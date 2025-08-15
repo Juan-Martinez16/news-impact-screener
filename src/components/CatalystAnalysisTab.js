@@ -1,294 +1,157 @@
-// src/components/CatalystAnalysisTab.js - FIXED VERSION FOR DATA DISPLAY
-// Replace your CatalystAnalysisTab.js with this version
+// src/components/CatalystAnalysisTab.js - FIXED VERSION
+// COMPLETE REPLACEMENT - This fixes prop mapping and data display
 
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useMemo } from "react";
 import {
-  Activity,
-  Clock,
-  Star,
-  Filter,
-  Search,
-  RefreshCw,
-  Eye,
-  ExternalLink,
-  AlertTriangle,
-  CheckCircle,
-  Info,
   Target,
-  BarChart3,
+  Calendar,
   TrendingUp,
-  TrendingDown,
-  StarOff,
+  AlertTriangle,
+  ExternalLink,
 } from "lucide-react";
 
 const CatalystAnalysisTab = ({
-  stockData = [],
+  screeningResults = [], // FIXED: Changed from other prop names
+  onSelectStock = () => {},
+  watchlist = [],
+  onToggleWatchlist = () => {},
   loading = false,
   error = null,
-  onStockSelect,
-  watchlist = [],
-  onWatchlistToggle,
-  marketContext = {},
 }) => {
-  console.log(
-    "🔬 CatalystAnalysisTab render - Data received:",
-    stockData.length,
-    "stocks"
-  );
+  console.log("🎯 CatalystAnalysisTab receiving data:", {
+    resultCount: screeningResults.length,
+    loading,
+    error,
+  });
 
-  // ============================================
-  // LOCAL STATE
-  // ============================================
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedTier, setSelectedTier] = useState("all");
-  const [selectedTimeframe, setSelectedTimeframe] = useState("24h");
-  const [sortBy, setSortBy] = useState("impactScore");
-
-  // ============================================
-  // HELPER FUNCTIONS
-  // ============================================
-
-  const getTierColor = useCallback((tier) => {
-    const colors = {
-      TIER_1: "bg-red-100 text-red-800 border-red-200",
-      TIER_2: "bg-yellow-100 text-yellow-800 border-yellow-200",
-      TIER_3: "bg-blue-100 text-blue-800 border-blue-200",
-    };
-    return colors[tier] || "bg-gray-100 text-gray-800 border-gray-200";
-  }, []);
-
-  const getTierIcon = useCallback((tier) => {
-    const icons = {
-      TIER_1: <AlertTriangle className="w-4 h-4" />,
-      TIER_2: <Star className="w-4 h-4" />,
-      TIER_3: <Info className="w-4 h-4" />,
-    };
-    return icons[tier] || <Info className="w-4 h-4" />;
-  }, []);
-
-  const classifyCatalystTier = useCallback((nissScore, confidence, sector) => {
-    const absScore = Math.abs(nissScore || 0);
-
-    // Tier 1 - High Impact (Major market movers)
-    if (absScore >= 70 && confidence === "HIGH") return "TIER_1";
-    if (absScore >= 80) return "TIER_1";
-
-    // Tier 2 - Medium Impact
-    if (absScore >= 40 && confidence !== "LOW") return "TIER_2";
-    if (absScore >= 60) return "TIER_2";
-
-    // Tier 3 - Low Impact
-    return "TIER_3";
-  }, []);
-
-  const calculateExpectedImpact = useCallback(
-    (tier, nissScore, currentPrice) => {
-      const absScore = Math.abs(nissScore || 0);
-      const price = currentPrice || 100;
-
-      let baseImpact = 0;
-      switch (tier) {
-        case "TIER_1":
-          baseImpact = absScore * 0.15; // Up to 15% impact
-          break;
-        case "TIER_2":
-          baseImpact = absScore * 0.08; // Up to 8% impact
-          break;
-        case "TIER_3":
-          baseImpact = absScore * 0.03; // Up to 3% impact
-          break;
-        default:
-          baseImpact = absScore * 0.01;
-      }
-
-      return {
-        percentage: Math.min(baseImpact / 100, 0.25), // Cap at 25%
-        priceTarget:
-          price *
-          (1 + (nissScore > 0 ? 1 : -1) * Math.min(baseImpact / 100, 0.25)),
-      };
-    },
-    []
-  );
-
-  // ============================================
-  // DATA PROCESSING
-  // ============================================
-
-  // Generate catalyst data from stock data
-  const processedCatalysts = useMemo(() => {
-    console.log("🔬 Processing catalysts from stock data:", stockData.length);
-
-    if (!stockData || stockData.length === 0) {
-      console.log("⚠️ No stock data available for catalyst analysis");
+  // Generate catalyst analysis from screening results
+  const catalystData = useMemo(() => {
+    if (!Array.isArray(screeningResults) || screeningResults.length === 0) {
       return [];
     }
 
-    const catalysts = stockData.map((stock, index) => {
-      const tier = classifyCatalystTier(
-        stock.nissScore,
-        stock.confidence,
-        stock.sector
-      );
-      const expectedImpact = calculateExpectedImpact(
-        tier,
-        stock.nissScore,
-        stock.currentPrice
-      );
-
-      // Generate realistic catalyst headlines based on NISS score and sector
-      const generateHeadline = () => {
-        const nissScore = stock.nissScore || 0;
-        const sector = stock.sector || "Technology";
-
-        if (Math.abs(nissScore) >= 70) {
-          return nissScore > 0
-            ? `${stock.symbol} Reports Strong Quarterly Earnings, Beats Estimates`
-            : `${stock.symbol} Faces Regulatory Challenges, Stock Under Pressure`;
-        } else if (Math.abs(nissScore) >= 40) {
-          return nissScore > 0
-            ? `${stock.symbol} Announces Strategic Partnership in ${sector} Sector`
-            : `${stock.symbol} Guidance Revision Concerns Investors`;
-        } else {
-          return `${stock.symbol} Regular Trading Activity in ${sector}`;
-        }
-      };
-
-      return {
-        id: `${stock.symbol}-${index}`,
+    return screeningResults
+      .filter((stock) => stock.nissScore >= 6) // High NISS scores likely have catalysts
+      .map((stock) => ({
         symbol: stock.symbol,
-        company: `${stock.symbol} Inc.`,
-        headline: generateHeadline(),
-        source: "Market Analysis",
-        timestamp: new Date().toISOString(),
-        tier: tier,
-        expectedImpact: expectedImpact,
-        currentPrice: stock.currentPrice || 0,
-        nissScore: stock.nissScore || 0,
+        catalystType: determineCatalystType(stock),
+        impact:
+          stock.nissScore >= 8
+            ? "HIGH"
+            : stock.nissScore >= 7
+            ? "MEDIUM"
+            : "LOW",
         confidence: stock.confidence || "MEDIUM",
-        sector: stock.sector || "Unknown",
-        dataSource: stock.dataSource || "backend",
-        volume: stock.volume,
-        changePercent: stock.changePercent || 0,
-      };
-    });
+        newsCount: stock.newsCount || 0,
+        timeframe: "1-3 days", // Estimated based on news velocity
+        description: generateCatalystDescription(stock),
+        priceTarget: calculatePriceTarget(stock),
+        currentPrice: stock.currentPrice || 0,
+        upside: stock.currentPrice
+          ? ((calculatePriceTarget(stock) - stock.currentPrice) /
+              stock.currentPrice) *
+            100
+          : 0,
+      }))
+      .sort((a, b) => (b.impact === "HIGH" ? 1 : -1));
+  }, [screeningResults]);
 
-    console.log("📊 Generated catalysts:", catalysts.length);
-    return catalysts;
-  }, [stockData, classifyCatalystTier, calculateExpectedImpact]);
+  // Helper function to determine catalyst type
+  const determineCatalystType = (stock) => {
+    const score = stock.nissScore || 0;
+    const sentiment = stock.sentiment || "NEUTRAL";
 
-  // Filter and sort catalysts
-  const filteredCatalysts = useMemo(() => {
-    let filtered = [...processedCatalysts];
-
-    // Apply search filter
-    if (searchTerm) {
-      filtered = filtered.filter(
-        (catalyst) =>
-          catalyst.symbol.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          catalyst.headline.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          catalyst.sector.toLowerCase().includes(searchTerm.toLowerCase())
-      );
+    if (score >= 8) {
+      return sentiment === "BULLISH" ? "Earnings Beat" : "Major News";
+    } else if (score >= 7) {
+      return "Product Launch";
+    } else {
+      return "Market Update";
     }
-
-    // Apply tier filter
-    if (selectedTier !== "all") {
-      filtered = filtered.filter((catalyst) => catalyst.tier === selectedTier);
-    }
-
-    // Sort by impact score (NISS score)
-    filtered.sort((a, b) => {
-      const aScore = Math.abs(a.nissScore);
-      const bScore = Math.abs(b.nissScore);
-      return bScore - aScore;
-    });
-
-    console.log("🔍 Filtered catalysts:", filtered.length);
-    return filtered.slice(0, 20); // Limit to top 20 for performance
-  }, [processedCatalysts, searchTerm, selectedTier]);
-
-  // ============================================
-  // EVENT HANDLERS
-  // ============================================
-
-  const handleCatalystClick = useCallback(
-    (catalyst) => {
-      if (onStockSelect) {
-        const stock = stockData.find((s) => s.symbol === catalyst.symbol);
-        onStockSelect(stock);
-      }
-    },
-    [stockData, onStockSelect]
-  );
-
-  const handleWatchlistClick = useCallback(
-    (symbol, event) => {
-      event.stopPropagation();
-      if (onWatchlistToggle) {
-        onWatchlistToggle(symbol);
-      }
-    },
-    [onWatchlistToggle]
-  );
-
-  // ============================================
-  // RENDER HELPERS
-  // ============================================
-
-  const formatPrice = (price) => {
-    return price ? `$${parseFloat(price).toFixed(2)}` : "N/A";
   };
 
-  const formatPercent = (percent) => {
-    return percent ? `${parseFloat(percent).toFixed(2)}%` : "0.00%";
+  // Helper function to generate catalyst description
+  const generateCatalystDescription = (stock) => {
+    const types = [
+      `Strong momentum in ${stock.symbol} driven by ${
+        stock.newsCount || 0
+      } news articles`,
+      `Significant price movement with NISS score of ${(
+        stock.nissScore || 0
+      ).toFixed(1)}`,
+      `Market attention increasing with ${
+        stock.confidence || "MEDIUM"
+      } confidence level`,
+      `Technical breakout potential with current sentiment: ${
+        stock.sentiment || "NEUTRAL"
+      }`,
+    ];
+
+    return types[Math.floor(Math.random() * types.length)];
   };
 
-  // ============================================
-  // MAIN RENDER
-  // ============================================
+  // Helper function to calculate price target
+  const calculatePriceTarget = (stock) => {
+    const currentPrice = stock.currentPrice || 0;
+    const nissMultiplier = (stock.nissScore || 0) / 10;
+    return currentPrice * (1 + nissMultiplier * 0.05); // 5% per NISS point approximation
+  };
 
-  // Loading state
-  if (loading && filteredCatalysts.length === 0) {
-    return (
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center justify-center">
-          <RefreshCw className="h-6 w-6 animate-spin text-blue-600 mr-3" />
-          <span className="text-lg font-medium text-gray-900">
-            Analyzing catalysts...
-          </span>
-        </div>
-      </div>
-    );
-  }
+  // Helper function to get impact color
+  const getImpactColor = (impact) => {
+    switch (impact) {
+      case "HIGH":
+        return "text-red-600 bg-red-100";
+      case "MEDIUM":
+        return "text-yellow-600 bg-yellow-100";
+      case "LOW":
+        return "text-green-600 bg-green-100";
+      default:
+        return "text-gray-600 bg-gray-100";
+    }
+  };
 
   // Error state
   if (error) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center text-red-600">
-          <AlertTriangle className="h-6 w-6 mr-3" />
-          <div>
-            <h3 className="text-lg font-medium">Error Loading Catalysts</h3>
-            <p className="text-sm text-red-500 mt-1">{error}</p>
-          </div>
+      <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+        <div className="flex items-center space-x-2 text-red-800">
+          <AlertTriangle className="w-5 h-5" />
+          <h3 className="font-medium">Catalyst Analysis Error</h3>
+        </div>
+        <p className="text-red-700 mt-2">{error}</p>
+      </div>
+    );
+  }
+
+  // Loading state
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-center py-12">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          <span className="ml-2 text-gray-600">Analyzing catalysts...</span>
         </div>
       </div>
     );
   }
 
-  // Empty state
-  if (!loading && filteredCatalysts.length === 0) {
+  // No data state
+  if (catalystData.length === 0) {
     return (
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="text-center">
-          <Activity className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">
-            No catalysts found
-          </h3>
-          <p className="text-gray-600 mb-4">
-            Try adjusting your search or filter criteria
-          </p>
+      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
+        <div className="flex items-center space-x-2 text-yellow-800">
+          <Target className="w-5 h-5" />
+          <h3 className="font-medium">No Major Catalysts Detected</h3>
         </div>
+        <p className="text-yellow-700 mt-2">
+          No stocks with significant catalyst potential found in current
+          screening results.
+        </p>
+        <p className="text-yellow-600 text-sm mt-1">
+          Try lowering the NISS threshold or refresh data to find more
+          opportunities.
+        </p>
       </div>
     );
   }
@@ -296,218 +159,164 @@ const CatalystAnalysisTab = ({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center space-x-3">
-            <Activity className="w-6 h-6 text-blue-600" />
-            <h2 className="text-xl font-bold text-gray-900">
-              Catalyst Analysis
-            </h2>
-            <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
-              {filteredCatalysts.length} Found
-            </span>
-          </div>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-semibold text-gray-900">
+            Catalyst Analysis
+          </h2>
+          <p className="text-sm text-gray-600">
+            {catalystData.length} potential catalysts identified
+          </p>
         </div>
 
-        {/* Summary Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-red-50 rounded-lg p-3">
-            <div className="text-sm text-red-600">Tier 1 (High Impact)</div>
-            <div className="text-lg font-bold text-red-700">
-              {filteredCatalysts.filter((c) => c.tier === "TIER_1").length}
-            </div>
-          </div>
-          <div className="bg-yellow-50 rounded-lg p-3">
-            <div className="text-sm text-yellow-600">
-              Tier 2 (Medium Impact)
-            </div>
-            <div className="text-lg font-bold text-yellow-700">
-              {filteredCatalysts.filter((c) => c.tier === "TIER_2").length}
-            </div>
-          </div>
-          <div className="bg-blue-50 rounded-lg p-3">
-            <div className="text-sm text-blue-600">Tier 3 (Low Impact)</div>
-            <div className="text-lg font-bold text-blue-700">
-              {filteredCatalysts.filter((c) => c.tier === "TIER_3").length}
-            </div>
-          </div>
-          <div className="bg-green-50 rounded-lg p-3">
-            <div className="text-sm text-green-600">Avg Impact Score</div>
-            <div className="text-lg font-bold text-green-700">
-              {(
-                filteredCatalysts.reduce(
-                  (sum, c) => sum + Math.abs(c.nissScore),
-                  0
-                ) / filteredCatalysts.length
-              ).toFixed(1)}
-            </div>
-          </div>
-        </div>
-
-        {/* Filters */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search catalysts..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-
-          {/* Tier Filter */}
-          <select
-            value={selectedTier}
-            onChange={(e) => setSelectedTier(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="all">All Impact Tiers</option>
-            <option value="TIER_1">Tier 1 - High Impact</option>
-            <option value="TIER_2">Tier 2 - Medium Impact</option>
-            <option value="TIER_3">Tier 3 - Low Impact</option>
-          </select>
-
-          {/* Timeframe Filter */}
-          <select
-            value={selectedTimeframe}
-            onChange={(e) => setSelectedTimeframe(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="1h">Last Hour</option>
-            <option value="4h">Last 4 Hours</option>
-            <option value="24h">Last 24 Hours</option>
-            <option value="7d">Last 7 Days</option>
-          </select>
+        <div className="flex items-center space-x-2 text-sm text-gray-500">
+          <Calendar className="w-4 h-4" />
+          <span>Next 1-3 days</span>
         </div>
       </div>
 
-      {/* Catalyst List */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="divide-y divide-gray-200">
-          {filteredCatalysts.map((catalyst, index) => (
-            <div
-              key={catalyst.id || index}
-              className="p-6 hover:bg-gray-50 cursor-pointer transition-colors"
-              onClick={() => handleCatalystClick(catalyst)}
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  {/* Header */}
-                  <div className="flex items-center space-x-3 mb-2">
-                    <span className="font-bold text-lg text-gray-900">
-                      {catalyst.symbol}
-                    </span>
-                    <span
-                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getTierColor(
-                        catalyst.tier
-                      )}`}
-                    >
-                      {getTierIcon(catalyst.tier)}
-                      <span className="ml-1">
-                        {catalyst.tier.replace("_", " ")}
-                      </span>
-                    </span>
-                    <span
-                      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        catalyst.confidence === "HIGH"
-                          ? "bg-green-100 text-green-800"
-                          : catalyst.confidence === "MEDIUM"
-                          ? "bg-yellow-100 text-yellow-800"
-                          : "bg-gray-100 text-gray-800"
-                      }`}
-                    >
-                      {catalyst.confidence}
-                    </span>
-                  </div>
+      {/* Catalyst Cards */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {catalystData.map((catalyst, index) => (
+          <div
+            key={catalyst.symbol}
+            className="bg-white border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow"
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center space-x-3">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {catalyst.symbol}
+                </h3>
+                <span
+                  className={`px-2 py-1 text-xs font-medium rounded-full ${getImpactColor(
+                    catalyst.impact
+                  )}`}
+                >
+                  {catalyst.impact} Impact
+                </span>
+              </div>
 
-                  {/* Headline */}
-                  <h3 className="text-sm font-medium text-gray-900 mb-2">
-                    {catalyst.headline}
-                  </h3>
+              <button
+                onClick={() => {
+                  const stock = screeningResults.find(
+                    (s) => s.symbol === catalyst.symbol
+                  );
+                  if (stock) onSelectStock(stock);
+                }}
+                className="text-blue-600 hover:text-blue-800"
+              >
+                <ExternalLink className="w-4 h-4" />
+              </button>
+            </div>
 
-                  {/* Details */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                    <div>
-                      <span className="text-gray-500">Current Price:</span>
-                      <div className="font-medium">
-                        {formatPrice(catalyst.currentPrice)}
-                      </div>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Change:</span>
-                      <div
-                        className={`font-medium ${
-                          catalyst.changePercent >= 0
-                            ? "text-green-600"
-                            : "text-red-600"
-                        }`}
-                      >
-                        {formatPercent(catalyst.changePercent)}
-                      </div>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">NISS Score:</span>
-                      <div className="font-medium">
-                        {catalyst.nissScore.toFixed(1)}
-                      </div>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Expected Impact:</span>
-                      <div className="font-medium">
-                        {(catalyst.expectedImpact.percentage * 100).toFixed(1)}%
-                      </div>
-                    </div>
-                  </div>
+            {/* Catalyst Type */}
+            <div className="mb-3">
+              <div className="flex items-center space-x-2">
+                <Target className="w-4 h-4 text-blue-600" />
+                <span className="text-sm font-medium text-gray-700">
+                  {catalyst.catalystType}
+                </span>
+              </div>
+            </div>
 
-                  {/* Additional Info */}
-                  <div className="flex items-center space-x-4 mt-3 text-xs text-gray-500">
-                    <span>Sector: {catalyst.sector}</span>
-                    <span>Source: {catalyst.source}</span>
-                    <span>Data: {catalyst.dataSource}</span>
-                  </div>
+            {/* Description */}
+            <p className="text-sm text-gray-600 mb-4">{catalyst.description}</p>
+
+            {/* Metrics Grid */}
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <div className="text-xs text-gray-500">Current Price</div>
+                <div className="text-sm font-medium text-gray-900">
+                  ${catalyst.currentPrice.toFixed(2)}
                 </div>
+              </div>
 
-                {/* Actions */}
-                <div className="flex items-center space-x-2 ml-4">
-                  <button
-                    onClick={(e) => handleWatchlistClick(catalyst.symbol, e)}
-                    className={`p-2 rounded hover:bg-gray-100 ${
-                      watchlist.includes(catalyst.symbol)
-                        ? "text-yellow-500"
-                        : "text-gray-400"
-                    }`}
-                  >
-                    {watchlist.includes(catalyst.symbol) ? (
-                      <Star className="h-4 w-4 fill-current" />
-                    ) : (
-                      <StarOff className="h-4 w-4" />
-                    )}
-                  </button>
-                  <button className="p-2 rounded hover:bg-gray-100 text-blue-600">
-                    <Eye className="h-4 w-4" />
-                  </button>
-                  <button className="p-2 rounded hover:bg-gray-100 text-gray-600">
-                    <ExternalLink className="h-4 w-4" />
-                  </button>
+              <div>
+                <div className="text-xs text-gray-500">Price Target</div>
+                <div className="text-sm font-medium text-green-600">
+                  ${catalyst.priceTarget.toFixed(2)}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs text-gray-500">Upside Potential</div>
+                <div
+                  className={`text-sm font-medium ${
+                    catalyst.upside > 0 ? "text-green-600" : "text-red-600"
+                  }`}
+                >
+                  {catalyst.upside > 0 ? "+" : ""}
+                  {catalyst.upside.toFixed(1)}%
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs text-gray-500">News Volume</div>
+                <div className="text-sm font-medium text-gray-900">
+                  {catalyst.newsCount} articles
                 </div>
               </div>
             </div>
-          ))}
-        </div>
 
-        {/* Summary Footer */}
-        {filteredCatalysts.length > 0 && (
-          <div className="bg-gray-50 px-6 py-3 border-t border-gray-200">
-            <div className="text-sm text-gray-600">
-              Showing {filteredCatalysts.length} catalysts • Processed from{" "}
-              {stockData.length} stocks • Last updated:{" "}
-              {new Date().toLocaleTimeString()}
+            {/* Actions */}
+            <div className="flex items-center justify-between pt-4 border-t border-gray-100">
+              <div className="flex items-center space-x-2">
+                <span className="text-xs text-gray-500">Confidence:</span>
+                <span className="text-xs font-medium text-gray-700">
+                  {catalyst.confidence}
+                </span>
+              </div>
+
+              <button
+                onClick={() => {
+                  const stock = screeningResults.find(
+                    (s) => s.symbol === catalyst.symbol
+                  );
+                  if (stock) onToggleWatchlist(stock);
+                }}
+                className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+              >
+                Add to Watchlist
+              </button>
             </div>
           </div>
-        )}
+        ))}
+      </div>
+
+      {/* Summary Stats */}
+      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+        <h3 className="text-sm font-medium text-gray-900 mb-3">
+          Catalyst Summary
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="text-center">
+            <div className="text-lg font-bold text-red-600">
+              {catalystData.filter((c) => c.impact === "HIGH").length}
+            </div>
+            <div className="text-xs text-gray-600">High Impact</div>
+          </div>
+
+          <div className="text-center">
+            <div className="text-lg font-bold text-yellow-600">
+              {catalystData.filter((c) => c.impact === "MEDIUM").length}
+            </div>
+            <div className="text-xs text-gray-600">Medium Impact</div>
+          </div>
+
+          <div className="text-center">
+            <div className="text-lg font-bold text-green-600">
+              {catalystData.length > 0
+                ? (
+                    catalystData.reduce((sum, c) => sum + c.upside, 0) /
+                    catalystData.length
+                  ).toFixed(1)
+                : "0.0"}
+              %
+            </div>
+            <div className="text-xs text-gray-600">Avg Upside</div>
+          </div>
+        </div>
       </div>
     </div>
   );
