@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import institutionalDataService from "../api/InstitutionalDataService";
-import "./NewsImpactScreener.css";
+
 
 const NewsImpactScreener = () => {
   const [stocks, setStocks] = useState([]);
