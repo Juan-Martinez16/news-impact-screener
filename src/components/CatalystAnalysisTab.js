@@ -1,5 +1,5 @@
 // src/components/CatalystAnalysisTab.js - FIXED VERSION
-// COMPLETE REPLACEMENT - This fixes prop mapping and data display
+// Complete replacement to fix variable hoisting and data structure issues
 
 import React, { useMemo } from "react";
 import {
@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 
 const CatalystAnalysisTab = ({
-  screeningResults = [], // FIXED: Changed from other prop names
+  screeningResults = [],
   onSelectStock = () => {},
   watchlist = [],
   onToggleWatchlist = () => {},
@@ -24,37 +24,9 @@ const CatalystAnalysisTab = ({
     error,
   });
 
-  // Generate catalyst analysis from screening results
-  const catalystData = useMemo(() => {
-    if (!Array.isArray(screeningResults) || screeningResults.length === 0) {
-      return [];
-    }
-
-    return screeningResults
-      .filter((stock) => stock.nissScore >= 6) // High NISS scores likely have catalysts
-      .map((stock) => ({
-        symbol: stock.symbol,
-        catalystType: determineCatalystType(stock),
-        impact:
-          stock.nissScore >= 8
-            ? "HIGH"
-            : stock.nissScore >= 7
-            ? "MEDIUM"
-            : "LOW",
-        confidence: stock.confidence || "MEDIUM",
-        newsCount: stock.newsCount || 0,
-        timeframe: "1-3 days", // Estimated based on news velocity
-        description: generateCatalystDescription(stock),
-        priceTarget: calculatePriceTarget(stock),
-        currentPrice: stock.currentPrice || 0,
-        upside: stock.currentPrice
-          ? ((calculatePriceTarget(stock) - stock.currentPrice) /
-              stock.currentPrice) *
-            100
-          : 0,
-      }))
-      .sort((a, b) => (b.impact === "HIGH" ? 1 : -1));
-  }, [screeningResults]);
+  // ============================================
+  // HELPER FUNCTIONS (DEFINED FIRST)
+  // ============================================
 
   // Helper function to determine catalyst type
   const determineCatalystType = (stock) => {
@@ -111,6 +83,71 @@ const CatalystAnalysisTab = ({
     }
   };
 
+  // ============================================
+  // CATALYST DATA PROCESSING
+  // ============================================
+
+  // Generate catalyst analysis from screening results
+  const catalystData = useMemo(() => {
+    console.log(
+      "🔄 Processing catalyst data from:",
+      screeningResults?.length,
+      "stocks"
+    );
+
+    if (!Array.isArray(screeningResults) || screeningResults.length === 0) {
+      console.log("⚠️ No screening results available for catalyst analysis");
+      return [];
+    }
+
+    try {
+      const processed = screeningResults
+        .filter((stock) => {
+          const nissScore = stock.nissScore || 0;
+          return nissScore >= 6; // High NISS scores likely have catalysts
+        })
+        .map((stock) => {
+          const currentPrice = stock.currentPrice || 0;
+          const priceTarget = calculatePriceTarget(stock);
+
+          return {
+            symbol: stock.symbol,
+            catalystType: determineCatalystType(stock),
+            impact:
+              stock.nissScore >= 8
+                ? "HIGH"
+                : stock.nissScore >= 7
+                ? "MEDIUM"
+                : "LOW",
+            confidence: stock.confidence || "MEDIUM",
+            newsCount: stock.newsCount || 0,
+            timeframe: "1-3 days", // Estimated based on news velocity
+            description: generateCatalystDescription(stock),
+            priceTarget: priceTarget,
+            currentPrice: currentPrice,
+            upside: currentPrice
+              ? ((priceTarget - currentPrice) / currentPrice) * 100
+              : 0,
+          };
+        })
+        .sort((a, b) => {
+          // Sort by impact priority: HIGH > MEDIUM > LOW
+          const impactOrder = { HIGH: 3, MEDIUM: 2, LOW: 1 };
+          return (impactOrder[b.impact] || 0) - (impactOrder[a.impact] || 0);
+        });
+
+      console.log("✅ Processed", processed.length, "catalyst opportunities");
+      return processed;
+    } catch (err) {
+      console.error("❌ Error processing catalyst data:", err);
+      return [];
+    }
+  }, [screeningResults]);
+
+  // ============================================
+  // RENDER CONDITIONS
+  // ============================================
+
   // Error state
   if (error) {
     return (
@@ -156,6 +193,10 @@ const CatalystAnalysisTab = ({
     );
   }
 
+  // ============================================
+  // MAIN RENDER
+  // ============================================
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -179,7 +220,7 @@ const CatalystAnalysisTab = ({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {catalystData.map((catalyst, index) => (
           <div
-            key={catalyst.symbol}
+            key={`catalyst-${catalyst.symbol}-${index}`}
             className="bg-white border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow"
           >
             {/* Header */}
@@ -205,6 +246,7 @@ const CatalystAnalysisTab = ({
                   if (stock) onSelectStock(stock);
                 }}
                 className="text-blue-600 hover:text-blue-800"
+                title={`View details for ${catalyst.symbol}`}
               >
                 <ExternalLink className="w-4 h-4" />
               </button>
@@ -276,6 +318,7 @@ const CatalystAnalysisTab = ({
                   if (stock) onToggleWatchlist(stock);
                 }}
                 className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                title={`Add ${catalyst.symbol} to watchlist`}
               >
                 Add to Watchlist
               </button>

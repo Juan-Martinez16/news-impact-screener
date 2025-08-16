@@ -1,344 +1,307 @@
-// src/api/InstitutionalDataService.js - v4.1.0-fixed
-// COMPLETE REPLACEMENT - Fixed timeout and error handling
+// src/api/InstitutionalDataService.js - v4.1.0-fixed COMPLETE VERSION
+// Full implementation with all methods and enhanced error handling
 
 class InstitutionalDataService {
   constructor() {
     this.version = "4.1.0-fixed";
-    this.cache = new Map();
     this.initialized = false;
-    this.initializing = false;
 
-    // FIXED: Environment variable detection with better fallback
+    // Enhanced backend URL detection
     this.backendBaseUrl = this.detectBackendUrl();
 
-    console.log(`🚀 InstitutionalDataService v${this.version} initializing...`);
-    console.log("🌍 Environment:", process.env.NODE_ENV || "development");
-    console.log("🔗 Backend URL:", this.backendBaseUrl);
-
-    // FIXED: More aggressive cache settings for development
-    this.cacheTTL = {
-      quotes: 30000, // 30 seconds (reduced)
-      news: 120000, // 2 minutes
-      technicals: 180000, // 3 minutes
-      screening: 60000, // 1 minute (reduced)
-      health: 30000, // 30 seconds
-      marketContext: 30000, // 30 seconds
+    // Connection status tracking
+    this.connectionStatus = {
+      isConnected: false,
+      lastCheck: null,
+      consecutiveErrors: 0,
+      backendVersion: "unknown",
     };
 
-    // Request tracking
-    this.requestCount = 0;
-    this.lastRequestTime = Date.now();
-    this.consecutiveErrors = 0;
-    this.maxRetries = 3;
+    // Request queue for rate limiting
+    this.requestQueue = [];
+    this.isProcessingQueue = false;
+    this.maxConcurrentRequests = 3;
+    this.activeRequests = 0;
+
+    // Cache for performance optimization
+    this.cache = new Map();
+    this.cacheTimeout = 5 * 60 * 1000; // 5 minutes
+
+    console.log(`🚀 InstitutionalDataService ${this.version} initializing...`);
+    console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`);
+    console.log(`🔗 Backend URL: ${this.backendBaseUrl}`);
   }
+
+  // ============================================
+  // BACKEND URL DETECTION
+  // ============================================
 
   detectBackendUrl() {
-    // Check multiple possible environment variable names
-    const possibleUrls = [
-      process.env.REACT_APP_BACKEND_URL,
-      process.env.REACT_APP_API_URL,
-      process.env.BACKEND_URL,
-      process.env.API_URL,
-    ].filter(Boolean);
+    // Try multiple environment variable formats
+    const envUrl =
+      process.env.REACT_APP_BACKEND_URL ||
+      process.env.BACKEND_URL ||
+      process.env.API_URL;
 
-    if (possibleUrls.length > 0) {
-      const url = possibleUrls[0];
-      console.log(`✅ Found environment URL: ${url}`);
-      return url;
+    if (envUrl) {
+      console.log("✅ Found environment URL:", envUrl);
+      return envUrl;
     }
 
-    // Development fallback
-    if (process.env.NODE_ENV === "development") {
-      console.log("🔧 Using development fallback URL");
-      return "http://localhost:3001";
+    // Default URLs based on environment
+    if (typeof window !== "undefined") {
+      const hostname = window.location.hostname;
+
+      if (hostname === "localhost" || hostname === "127.0.0.1") {
+        console.log("🔧 Development environment detected, using localhost");
+        return "http://localhost:3001";
+      }
+
+      if (
+        hostname.includes("vercel.app") ||
+        hostname.includes("claude.ai") ||
+        hostname.includes("artifacts.anthropic.com")
+      ) {
+        console.log("☁️ Production environment detected, using Render backend");
+        return "https://news-impact-screener-backend.onrender.com";
+      }
     }
 
-    // Production fallback
-    console.log("🌐 Using production fallback URL");
-    return "https://news-impact-screener-backend.onrender.com";
+    // Final fallback
+    const fallbackUrl = "https://news-impact-screener-backend.onrender.com";
+    console.log("⚠️ No environment URL found, using fallback:", fallbackUrl);
+    return fallbackUrl;
   }
 
-  async ensureInitialized() {
-    if (this.initialized) return true;
+  // ============================================
+  // CONNECTION MANAGEMENT
+  // ============================================
 
-    if (this.initializing) {
-      // Wait for existing initialization
-      let attempts = 0;
-      while (this.initializing && attempts < 50) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        attempts++;
-      }
-      return this.initialized;
+  async initializeConnection() {
+    if (this.initialized) {
+      return this.connectionStatus;
     }
 
-    this.initializing = true;
     console.log("🔗 Initializing connection to backend:", this.backendBaseUrl);
 
     try {
-      const response = await this.makeApiCall("/api/health", {
-        timeout: 10000, // Reduced timeout
-        retries: 2,
-      });
+      const healthCheck = await this.testConnection();
+      this.connectionStatus = {
+        isConnected: true,
+        lastCheck: new Date().toISOString(),
+        consecutiveErrors: 0,
+        backendVersion: healthCheck.version || "unknown",
+      };
 
-      if (response && response.version) {
-        this.initialized = true;
-        this.consecutiveErrors = 0;
-        console.log(`✅ Backend connected successfully: ${response.version}`);
-        console.log(`📊 APIs available: ${response.summary?.totalApis || 0}`);
-        return true;
-      } else {
-        throw new Error("Invalid health response structure");
-      }
+      this.initialized = true;
+      console.log("✅ Backend connected successfully:", healthCheck.version);
+      console.log(
+        "📊 APIs available:",
+        Object.keys(healthCheck.apis?.ready || {}).length
+      );
+
+      return this.connectionStatus;
     } catch (error) {
-      console.error("❌ Backend initialization failed:", error.message);
-      this.consecutiveErrors++;
-      return false;
-    } finally {
-      this.initializing = false;
+      console.error("❌ Backend connection failed:", error.message);
+      this.connectionStatus = {
+        isConnected: false,
+        lastCheck: new Date().toISOString(),
+        consecutiveErrors: this.connectionStatus.consecutiveErrors + 1,
+        backendVersion: "unknown",
+        error: error.message,
+      };
+
+      throw error;
     }
   }
 
-  async makeApiCall(endpoint, options = {}) {
-    const url = this.backendBaseUrl + endpoint;
-    const timeout = options.timeout || 15000; // Reduced default timeout
-    const retries = options.retries || this.maxRetries;
-    const method = options.method || "GET";
+  async testConnection() {
+    console.log("🔌 Testing connection to backend...");
+    const startTime = Date.now();
+
+    try {
+      const response = await this.makeRequest("/api/health", {
+        timeout: 5000,
+      });
+
+      const responseTime = Date.now() - startTime;
+      console.log(`✅ Connection test passed in ${responseTime}ms`);
+
+      return response;
+    } catch (error) {
+      const responseTime = Date.now() - startTime;
+      console.error(
+        `❌ Connection test failed in ${responseTime}ms:`,
+        error.message
+      );
+      throw error;
+    }
+  }
+
+  // ============================================
+  // ENHANCED REQUEST HANDLING
+  // ============================================
+
+  async makeRequest(endpoint, options = {}) {
+    const url = `${this.backendBaseUrl}${endpoint}`;
+    const startTime = Date.now();
 
     console.log(`🌐 Fetch to: ${url}`);
 
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => {
-        console.log(`⏰ Request timeout after ${timeout}ms`);
-        controller.abort();
-      }, timeout);
+    const defaultOptions = {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-Client-Version": this.version,
+        "Cache-Control": "no-cache",
+      },
+      timeout: options.timeout || 15000,
+    };
 
-      try {
-        const requestOptions = {
-          method,
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-            "X-Client-Version": this.version,
-            "Cache-Control": "no-cache",
-            "User-Agent": `NewsImpactScreener/${this.version}`,
-          },
-          signal: controller.signal,
-          credentials: "omit", // FIXED: Explicit credentials setting
-        };
-
-        if (method !== "GET" && options.body) {
-          requestOptions.body = JSON.stringify(options.body);
-        }
-
-        const response = await fetch(url, requestOptions);
-        clearTimeout(timeoutId);
-
-        console.log(`📡 Response: ${response.status}`);
-
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => "Unknown error");
-          throw new Error(`HTTP ${response.status}: ${errorText}`);
-        }
-
-        const contentType = response.headers.get("content-type");
-        if (!contentType || !contentType.includes("application/json")) {
-          const text = await response.text();
-          console.warn("⚠️ Non-JSON response:", text.substring(0, 200));
-          throw new Error("Server returned non-JSON response");
-        }
-
-        const data = await response.json();
-        this.consecutiveErrors = 0; // Reset error count on success
-
-        return data;
-      } catch (error) {
-        clearTimeout(timeoutId);
-
-        this.consecutiveErrors++;
-
-        if (error.name === "AbortError") {
-          console.warn(`⏰ Request aborted (attempt ${attempt}/${retries})`);
-        } else {
-          console.warn(
-            `❌ API call failed (attempt ${attempt}/${retries}):`,
-            error.message
-          );
-        }
-
-        // Don't retry on abort errors or if this is the last attempt
-        if (error.name === "AbortError" || attempt === retries) {
-          throw new Error(
-            `API call failed after ${attempt} attempts: ${error.message}`
-          );
-        }
-
-        // Wait before retry with exponential backoff
-        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-        console.log(`🔄 Retrying in ${delay}ms...`);
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
-  }
-
-  // Cache management with TTL
-  getCachedData(key, ttl = 60000) {
-    const cached = this.cache.get(key);
-    if (!cached) return null;
-
-    const { data, timestamp } = cached;
-    const age = Date.now() - timestamp;
-
-    if (age > ttl) {
-      this.cache.delete(key);
-      return null;
-    }
-
-    console.log(`📦 Cache hit for ${key} (age: ${Math.round(age / 1000)}s)`);
-    return data;
-  }
-
-  setCachedData(key, data, ttl = 60000) {
-    this.cache.set(key, {
-      data,
-      timestamp: Date.now(),
-      ttl,
-    });
-
-    // Clean old cache entries occasionally
-    if (Math.random() < 0.1) {
-      this.cleanCache();
-    }
-  }
-
-  cleanCache() {
-    const now = Date.now();
-    let cleaned = 0;
-
-    for (const [key, value] of this.cache.entries()) {
-      if (now - value.timestamp > value.ttl) {
-        this.cache.delete(key);
-        cleaned++;
-      }
-    }
-
-    if (cleaned > 0) {
-      console.log(`🧹 Cleaned ${cleaned} expired cache entries`);
-    }
-  }
-
-  // FIXED: Enhanced stock screening with better error handling
-  async getStockScreening(options = {}) {
-    const cacheKey = `screening_${JSON.stringify(options)}`;
-
-    // Check cache first
-    const cached = this.getCachedData(cacheKey, this.cacheTTL.screening);
-    if (cached && !options.forceRefresh) {
-      console.log("📦 Returning cached screening results");
-      return cached;
-    }
+    const finalOptions = { ...defaultOptions, ...options };
 
     try {
-      console.log("🔍 Starting stock screening with options:", options);
-
-      // Ensure backend is initialized
-      const initialized = await this.ensureInitialized();
-      if (!initialized) {
-        throw new Error("Backend service unavailable");
-      }
-
-      // Make the screening request with longer timeout
-      const response = await this.makeApiCall("/api/screening", {
-        timeout: 45000, // 45 second timeout for screening
-        retries: 2, // Fewer retries but longer timeout
-      });
-
-      if (!response) {
-        throw new Error("Empty response from screening API");
-      }
-
-      // Validate response structure
-      if (!response.summary && !response.stocks && !response.results) {
-        console.warn(
-          "⚠️ Unexpected response structure:",
-          Object.keys(response)
-        );
-        throw new Error("Invalid response structure from screening API");
-      }
-
-      // Normalize response format (handle both 'stocks' and 'results' arrays)
-      const normalizedResponse = {
-        summary: response.summary || {
-          totalProcessed: 0,
-          successRate: 0,
-          timestamp: new Date().toISOString(),
-        },
-        stocks: response.stocks || response.results || [],
-        performance: response.performance || {},
-        metadata: response.metadata || {},
-        errors: response.errors || [],
-      };
-
-      // Additional validation
-      if (!Array.isArray(normalizedResponse.stocks)) {
-        throw new Error("Stocks data is not an array");
-      }
-
-      console.log(
-        `✅ Screening completed: ${normalizedResponse.stocks.length} stocks returned`
+      // Implement timeout manually since fetch doesn't support it natively
+      const controller = new AbortController();
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        finalOptions.timeout
       );
 
-      // Cache the results
-      this.setCachedData(cacheKey, normalizedResponse, this.cacheTTL.screening);
+      const response = await fetch(url, {
+        ...finalOptions,
+        signal: controller.signal,
+      });
 
-      return normalizedResponse;
+      clearTimeout(timeoutId);
+
+      const responseTime = Date.now() - startTime;
+      console.log(`📡 Response: ${response.status} (${responseTime}ms)`);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      // Update connection status on successful request
+      this.connectionStatus.isConnected = true;
+      this.connectionStatus.consecutiveErrors = 0;
+      this.connectionStatus.lastCheck = new Date().toISOString();
+
+      return data;
     } catch (error) {
-      console.error("❌ Stock screening failed:", error.message);
+      const responseTime = Date.now() - startTime;
+      console.error(`❌ Request failed (${responseTime}ms):`, error.message);
 
-      // Return cached data if available and error is network-related
-      if (
-        error.message.includes("timeout") ||
-        error.message.includes("aborted")
-      ) {
-        const staleCache = this.cache.get(cacheKey);
-        if (staleCache) {
-          console.log("🔄 Returning stale cache due to timeout");
-          return staleCache.data;
-        }
+      // Update connection status on error
+      this.connectionStatus.consecutiveErrors++;
+      this.connectionStatus.lastCheck = new Date().toISOString();
+
+      if (error.name === "AbortError") {
+        throw new Error(`Request timeout after ${finalOptions.timeout}ms`);
+      }
+
+      // Enhanced error messages for common issues
+      if (error.message.includes("Failed to fetch")) {
+        throw new Error(
+          "Backend service unavailable. Please check your connection."
+        );
+      }
+
+      if (error.message.includes("CORS")) {
+        throw new Error("CORS policy error. Backend configuration issue.");
+      }
+
+      if (error.message.includes("NetworkError")) {
+        throw new Error("Network error. Check your internet connection.");
       }
 
       throw error;
     }
   }
 
-  // Market context with caching
-  async getMarketContext() {
-    const cacheKey = "market_context";
+  // Request with retry logic
+  async makeRequestWithRetry(endpoint, options = {}, maxRetries = 2) {
+    let lastError;
 
-    const cached = this.getCachedData(cacheKey, this.cacheTTL.marketContext);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(
+          `🔄 Request attempt ${attempt}/${maxRetries} for ${endpoint}`
+        );
+        return await this.makeRequest(endpoint, options);
+      } catch (error) {
+        lastError = error;
+        console.warn(`⚠️ Attempt ${attempt} failed:`, error.message);
+
+        if (attempt < maxRetries) {
+          // Exponential backoff: 1s, 2s, 4s...
+          const delay = Math.pow(2, attempt - 1) * 1000;
+          console.log(`⏳ Retrying in ${delay}ms...`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    console.error(`❌ All ${maxRetries} attempts failed for ${endpoint}`);
+    throw lastError;
+  }
+
+  // ============================================
+  // CACHE MANAGEMENT
+  // ============================================
+
+  getCachedData(key) {
+    const cached = this.cache.get(key);
+    if (!cached) return null;
+
+    const now = Date.now();
+    if (now - cached.timestamp > this.cacheTimeout) {
+      this.cache.delete(key);
+      return null;
+    }
+
+    console.log(`📋 Cache hit for ${key}`);
+    return cached.data;
+  }
+
+  setCachedData(key, data) {
+    this.cache.set(key, {
+      data,
+      timestamp: Date.now(),
+    });
+    console.log(`💾 Cached data for ${key}`);
+  }
+
+  clearCache() {
+    this.cache.clear();
+    console.log("🧹 Cache cleared");
+  }
+
+  // ============================================
+  // CORE API METHODS
+  // ============================================
+
+  async getMarketContext() {
+    console.log("📈 Loading market context...");
+
+    const cacheKey = "market-context";
+    const cached = this.getCachedData(cacheKey);
     if (cached) return cached;
 
     try {
-      console.log("📈 Loading market context...");
-
-      const response = await this.makeApiCall("/api/market-context", {
-        timeout: 10000,
-        retries: 2,
-      });
-
-      if (!response) {
-        throw new Error("Empty market context response");
-      }
-
+      const response = await this.makeRequestWithRetry("/api/market-context");
       console.log("✅ Market context loaded:", response);
-      this.setCachedData(cacheKey, response, this.cacheTTL.marketContext);
 
+      this.setCachedData(cacheKey, response);
       return response;
     } catch (error) {
-      console.error("❌ Market context failed:", error.message);
+      console.error("❌ Market context loading failed:", error.message);
 
-      // Return sensible defaults
-      return {
+      // Return fallback market context
+      const fallback = {
         volatility: "NORMAL",
         trend: "NEUTRAL",
         breadth: "MIXED",
@@ -348,127 +311,550 @@ class InstitutionalDataService {
         dataSource: "FALLBACK",
         error: error.message,
       };
+
+      this.setCachedData(cacheKey, fallback);
+      return fallback;
     }
   }
 
-  // Connection testing utility
-  async testConnection() {
-    console.log("🔌 Testing connection to backend...");
+  async performScreening(options = {}) {
+    console.log("🔍 Starting stock screening with options:", options);
 
     try {
-      const startTime = Date.now();
-      const health = await this.makeApiCall("/api/health", {
-        timeout: 8000,
-        retries: 1,
-      });
-      const connectionTime = Date.now() - startTime;
+      // Initialize connection if not already done
+      if (!this.initialized) {
+        await this.initializeConnection();
+      }
 
-      console.log(`✅ Connection test passed in ${connectionTime}ms`);
-      return {
-        success: true,
-        connectionTime,
-        version: health.version,
-        apis: Object.keys(health.apis || {}).length,
-        status: health.status,
+      const startTime = Date.now();
+      const endpoint = "/api/screening";
+
+      // Add query parameters if provided
+      const params = new URLSearchParams();
+      if (options.limit) params.append("limit", options.limit);
+      if (options.minNissScore)
+        params.append("minNissScore", options.minNissScore);
+      if (options.includeAll) params.append("includeAll", "true");
+      if (options.sortBy) params.append("sortBy", options.sortBy);
+      if (options.sortOrder) params.append("sortOrder", options.sortOrder);
+
+      const fullEndpoint = params.toString()
+        ? `${endpoint}?${params}`
+        : endpoint;
+
+      const response = await this.makeRequestWithRetry(fullEndpoint, {
+        timeout: 30000, // 30 second timeout for screening
+      });
+
+      const processingTime = Date.now() - startTime;
+
+      if (!response || !response.stocks) {
+        throw new Error("Invalid screening response format");
+      }
+
+      console.log(
+        `✅ Screening completed: ${response.stocks.length} stocks returned`
+      );
+      console.log(`⏱️ Processing time: ${processingTime}ms`);
+      console.log(
+        `📊 Success rate: ${response.summary?.successRate || "unknown"}%`
+      );
+
+      // Validate and enhance the response
+      const enhancedResponse = {
+        ...response,
+        stocks: response.stocks.map((stock) => ({
+          ...stock,
+          // Ensure all required fields exist with defaults
+          nissScore: stock.nissScore || 0,
+          sentiment: stock.sentiment || "NEUTRAL",
+          confidence: stock.confidence || "MEDIUM",
+          newsCount: stock.newsCount || 0,
+          currentPrice: stock.currentPrice || 0,
+          changePercent: stock.changePercent || 0,
+          change: stock.change || 0,
+          volume: stock.volume || 0,
+          marketCap: stock.marketCap || 0,
+          lastUpdated: stock.lastUpdated || new Date().toISOString(),
+          source: stock.source || "backend",
+          // Add computed fields for compatibility
+          price: stock.currentPrice || stock.price || 0,
+          symbol: stock.symbol || "UNKNOWN",
+        })),
+        processingTime,
+        clientVersion: this.version,
+        timestamp: new Date().toISOString(),
       };
+
+      // Cache successful results for 2 minutes
+      this.setCachedData("screening-results", enhancedResponse);
+
+      return enhancedResponse;
     } catch (error) {
-      console.error("❌ Connection test failed:", error.message);
+      console.error("❌ Stock screening failed:", error.message);
+
+      // Try to return cached data if available
+      const cached = this.getCachedData("screening-results");
+      if (cached) {
+        console.log("📋 Returning cached screening data due to error");
+        return {
+          ...cached,
+          error: `Using cached data: ${error.message}`,
+          fromCache: true,
+        };
+      }
+
+      // Return empty result with error info for graceful degradation
       return {
-        success: false,
+        stocks: [],
+        summary: {
+          totalProcessed: 0,
+          totalRequested: 0,
+          successRate: "0",
+          processingTime: "0ms",
+          errors: 1,
+          timestamp: new Date().toISOString(),
+        },
         error: error.message,
-        connectionTime: null,
+        clientVersion: this.version,
+        timestamp: new Date().toISOString(),
       };
     }
   }
 
-  // Service status and diagnostics
-  getServiceStatus() {
+  async getStockQuote(symbol) {
+    if (!symbol) {
+      throw new Error("Symbol is required for quote lookup");
+    }
+
+    console.log(`📊 Getting quote for ${symbol}...`);
+
+    const cacheKey = `quote-${symbol}`;
+    const cached = this.getCachedData(cacheKey);
+    if (cached) return cached;
+
+    try {
+      const response = await this.makeRequestWithRetry(`/api/quotes/${symbol}`);
+      console.log(`✅ Quote received for ${symbol}:`, response);
+
+      this.setCachedData(cacheKey, response);
+      return response;
+    } catch (error) {
+      console.error(`❌ Quote failed for ${symbol}:`, error.message);
+      throw error;
+    }
+  }
+
+  async getBatchQuotes(symbols) {
+    if (!Array.isArray(symbols) || symbols.length === 0) {
+      throw new Error("Invalid symbols array provided");
+    }
+
+    console.log(`📊 Getting batch quotes for ${symbols.length} symbols...`);
+
+    try {
+      const symbolsParam = symbols.slice(0, 20).join(","); // Limit to 20 symbols
+      const response = await this.makeRequestWithRetry(
+        `/api/quotes/batch/${symbolsParam}`
+      );
+      console.log(`✅ Batch quotes received for ${symbols.length} symbols`);
+      return response;
+    } catch (error) {
+      console.error(`❌ Batch quotes failed:`, error.message);
+      throw error;
+    }
+  }
+
+  async getTechnicalAnalysis(symbol) {
+    if (!symbol) {
+      throw new Error("Symbol is required for technical analysis");
+    }
+
+    console.log(`📈 Getting technical analysis for ${symbol}...`);
+
+    const cacheKey = `technicals-${symbol}`;
+    const cached = this.getCachedData(cacheKey);
+    if (cached) return cached;
+
+    try {
+      const response = await this.makeRequestWithRetry(
+        `/api/technicals/${symbol}`
+      );
+      console.log(`✅ Technical analysis received for ${symbol}`);
+
+      this.setCachedData(cacheKey, response);
+      return response;
+    } catch (error) {
+      console.error(
+        `❌ Technical analysis failed for ${symbol}:`,
+        error.message
+      );
+      throw error;
+    }
+  }
+
+  async getNewsAnalysis(symbol) {
+    if (!symbol) {
+      throw new Error("Symbol is required for news analysis");
+    }
+
+    console.log(`📰 Getting news analysis for ${symbol}...`);
+
+    const cacheKey = `news-${symbol}`;
+    const cached = this.getCachedData(cacheKey);
+    if (cached) return cached;
+
+    try {
+      const response = await this.makeRequestWithRetry(`/api/news/${symbol}`);
+      console.log(`✅ News analysis received for ${symbol}`);
+
+      this.setCachedData(cacheKey, response);
+      return response;
+    } catch (error) {
+      console.error(`❌ News analysis failed for ${symbol}:`, error.message);
+      throw error;
+    }
+  }
+
+  async getCatalystAnalysis(symbol) {
+    if (!symbol) {
+      throw new Error("Symbol is required for catalyst analysis");
+    }
+
+    console.log(`🎯 Getting catalyst analysis for ${symbol}...`);
+
+    try {
+      const response = await this.makeRequestWithRetry(
+        `/api/catalysts/${symbol}`
+      );
+      console.log(`✅ Catalyst analysis received for ${symbol}`);
+      return response;
+    } catch (error) {
+      console.error(
+        `❌ Catalyst analysis failed for ${symbol}:`,
+        error.message
+      );
+      throw error;
+    }
+  }
+
+  // ============================================
+  // UTILITY METHODS
+  // ============================================
+
+  async healthCheck() {
+    try {
+      const response = await this.makeRequest("/api/health");
+      return {
+        healthy: true,
+        ...response,
+      };
+    } catch (error) {
+      return {
+        healthy: false,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
+  async testApiKeys() {
+    console.log("🧪 Testing API key configuration...");
+
+    try {
+      const response = await this.makeRequest("/api/test-keys");
+      console.log("✅ API key test completed:", response.summary);
+      return response;
+    } catch (error) {
+      console.error("❌ API key test failed:", error.message);
+      throw error;
+    }
+  }
+
+  // Get connection status
+  getConnectionStatus() {
     return {
-      version: this.version,
-      initialized: this.initialized,
+      ...this.connectionStatus,
       backendUrl: this.backendBaseUrl,
+      clientVersion: this.version,
+      initialized: this.initialized,
       cacheSize: this.cache.size,
-      consecutiveErrors: this.consecutiveErrors,
-      lastRequestTime: this.lastRequestTime,
-      requestCount: this.requestCount,
+      activeRequests: this.activeRequests,
     };
   }
 
-  // Debug helper for development
-  async debugScreeningResponse() {
-    if (process.env.NODE_ENV !== "development") {
-      console.warn("Debug method only available in development");
-      return null;
-    }
-
-    try {
-      console.log("🐛 === SCREENING DEBUG SESSION ===");
-
-      // Test connection first
-      const connectionTest = await this.testConnection();
-      console.log("🔌 Connection test:", connectionTest);
-
-      if (!connectionTest.success) {
-        console.log("❌ Connection failed, aborting debug");
-        return null;
-      }
-
-      // Make direct API call
-      const response = await this.makeApiCall("/api/screening", {
-        timeout: 30000,
-        retries: 1,
-      });
-
-      console.log("📊 Response type:", typeof response);
-      console.log("📊 Response keys:", Object.keys(response || {}));
-
-      if (response?.stocks) {
-        console.log("📈 Stocks array length:", response.stocks.length);
-        console.log("📈 First stock sample:", response.stocks[0]);
-      }
-
-      if (response?.results) {
-        console.log("📈 Results array length:", response.results.length);
-        console.log("📈 First result sample:", response.results[0]);
-      }
-
-      console.log("🐛 === END DEBUG SESSION ===");
-      return response;
-    } catch (error) {
-      console.error("🐛 Debug session failed:", error);
-      return null;
-    }
-  }
-
-  // Clear all caches
-  clearCache() {
-    const size = this.cache.size;
-    this.cache.clear();
-    console.log(`🧹 Cleared ${size} cache entries`);
-  }
-
-  // Reset service state
-  reset() {
+  // Reset connection (useful for troubleshooting)
+  resetConnection() {
+    console.log("🔄 Resetting connection...");
     this.initialized = false;
-    this.initializing = false;
-    this.consecutiveErrors = 0;
+    this.connectionStatus = {
+      isConnected: false,
+      lastCheck: null,
+      consecutiveErrors: 0,
+      backendVersion: "unknown",
+    };
     this.clearCache();
-    console.log("🔄 Service state reset");
+  }
+
+  // ============================================
+  // ERROR HANDLING & DIAGNOSTICS
+  // ============================================
+
+  async runDiagnostics() {
+    console.log("🏥 Running service diagnostics...");
+
+    const diagnostics = {
+      client: {
+        version: this.version,
+        backendUrl: this.backendBaseUrl,
+        initialized: this.initialized,
+        connectionStatus: this.connectionStatus,
+        cacheSize: this.cache.size,
+      },
+      tests: {},
+      summary: {
+        passed: 0,
+        failed: 0,
+        warnings: [],
+      },
+    };
+
+    // Test 1: Health Check
+    try {
+      const health = await this.healthCheck();
+      diagnostics.tests.healthCheck = {
+        status: health.healthy ? "PASS" : "FAIL",
+        data: health,
+      };
+      if (health.healthy) diagnostics.summary.passed++;
+      else diagnostics.summary.failed++;
+    } catch (error) {
+      diagnostics.tests.healthCheck = {
+        status: "FAIL",
+        error: error.message,
+      };
+      diagnostics.summary.failed++;
+    }
+
+    // Test 2: API Keys
+    try {
+      const apiTest = await this.testApiKeys();
+      const workingApis = apiTest.summary?.working || 0;
+      diagnostics.tests.apiKeys = {
+        status: workingApis >= 3 ? "PASS" : "WARN",
+        data: apiTest.summary,
+      };
+      if (workingApis >= 3) diagnostics.summary.passed++;
+      else {
+        diagnostics.summary.warnings.push(`Only ${workingApis} APIs working`);
+        diagnostics.summary.failed++;
+      }
+    } catch (error) {
+      diagnostics.tests.apiKeys = {
+        status: "FAIL",
+        error: error.message,
+      };
+      diagnostics.summary.failed++;
+    }
+
+    // Test 3: Basic Screening
+    try {
+      const screeningTest = await this.performScreening({ limit: 5 });
+      const stockCount = screeningTest.stocks?.length || 0;
+      diagnostics.tests.screening = {
+        status: stockCount > 0 ? "PASS" : "FAIL",
+        data: {
+          stocksReturned: stockCount,
+          successRate: screeningTest.summary?.successRate,
+          processingTime: screeningTest.processingTime,
+        },
+      };
+      if (stockCount > 0) diagnostics.summary.passed++;
+      else diagnostics.summary.failed++;
+    } catch (error) {
+      diagnostics.tests.screening = {
+        status: "FAIL",
+        error: error.message,
+      };
+      diagnostics.summary.failed++;
+    }
+
+    // Test 4: Market Context
+    try {
+      const marketTest = await this.getMarketContext();
+      diagnostics.tests.marketContext = {
+        status: marketTest.trend ? "PASS" : "WARN",
+        data: {
+          trend: marketTest.trend,
+          volatility: marketTest.volatility,
+          dataSource: marketTest.dataSource,
+        },
+      };
+      if (marketTest.trend) diagnostics.summary.passed++;
+      else
+        diagnostics.summary.warnings.push("Market context using fallback data");
+    } catch (error) {
+      diagnostics.tests.marketContext = {
+        status: "FAIL",
+        error: error.message,
+      };
+      diagnostics.summary.failed++;
+    }
+
+    diagnostics.summary.overall =
+      diagnostics.summary.failed === 0
+        ? "HEALTHY"
+        : diagnostics.summary.passed > diagnostics.summary.failed
+        ? "DEGRADED"
+        : "UNHEALTHY";
+
+    console.log("📋 Diagnostics completed:", diagnostics.summary);
+    return diagnostics;
+  }
+
+  // ============================================
+  // LEGACY COMPATIBILITY METHODS
+  // ============================================
+
+  // For backward compatibility with older components
+  async loadData() {
+    console.log(
+      "🔄 Legacy loadData() called, redirecting to performScreening..."
+    );
+    return this.performScreening();
+  }
+
+  async getScreeningData(options = {}) {
+    console.log(
+      "🔄 Legacy getScreeningData() called, redirecting to performScreening..."
+    );
+    return this.performScreening(options);
+  }
+
+  async getStockData(symbol) {
+    console.log(
+      "🔄 Legacy getStockData() called, redirecting to getStockQuote..."
+    );
+    return this.getStockQuote(symbol);
+  }
+
+  // ============================================
+  // WATCHLIST MANAGEMENT
+  // ============================================
+
+  getWatchlist() {
+    try {
+      const saved = localStorage.getItem("institutionalWatchlist");
+      return saved ? JSON.parse(saved) : [];
+    } catch (error) {
+      console.error("❌ Error loading watchlist:", error);
+      return [];
+    }
+  }
+
+  saveWatchlist(watchlist) {
+    try {
+      localStorage.setItem("institutionalWatchlist", JSON.stringify(watchlist));
+      console.log("💾 Watchlist saved:", watchlist.length, "items");
+      return true;
+    } catch (error) {
+      console.error("❌ Error saving watchlist:", error);
+      return false;
+    }
+  }
+
+  addToWatchlist(stock) {
+    if (!stock || !stock.symbol) {
+      throw new Error("Invalid stock data for watchlist");
+    }
+
+    const watchlist = this.getWatchlist();
+    const exists = watchlist.some((item) => item.symbol === stock.symbol);
+
+    if (!exists) {
+      const newItem = {
+        ...stock,
+        addedAt: new Date().toISOString(),
+      };
+      watchlist.push(newItem);
+      this.saveWatchlist(watchlist);
+      console.log(`➕ Added ${stock.symbol} to watchlist`);
+    }
+
+    return watchlist;
+  }
+
+  removeFromWatchlist(symbol) {
+    if (!symbol) {
+      throw new Error("Symbol is required to remove from watchlist");
+    }
+
+    const watchlist = this.getWatchlist();
+    const filtered = watchlist.filter((item) => item.symbol !== symbol);
+    this.saveWatchlist(filtered);
+    console.log(`➖ Removed ${symbol} from watchlist`);
+    return filtered;
+  }
+
+  // ============================================
+  // PERFORMANCE MONITORING
+  // ============================================
+
+  getPerformanceMetrics() {
+    return {
+      version: this.version,
+      connectionStatus: this.connectionStatus,
+      cacheStats: {
+        size: this.cache.size,
+        hitRate: this.cacheHitRate || 0,
+      },
+      requestStats: {
+        total: this.totalRequests || 0,
+        successful: this.successfulRequests || 0,
+        failed: this.failedRequests || 0,
+        averageResponseTime: this.averageResponseTime || 0,
+      },
+      lastDiagnostic: this.lastDiagnostic || null,
+    };
+  }
+
+  // ============================================
+  // STATIC METHODS
+  // ============================================
+
+  static getInstance() {
+    if (!InstitutionalDataService.instance) {
+      InstitutionalDataService.instance = new InstitutionalDataService();
+    }
+    return InstitutionalDataService.instance;
+  }
+
+  static async create() {
+    const instance = InstitutionalDataService.getInstance();
+    if (!instance.initialized) {
+      await instance.initializeConnection();
+    }
+    return instance;
+  }
+
+  // ============================================
+  // CLEANUP
+  // ============================================
+
+  destroy() {
+    console.log("🧹 Cleaning up InstitutionalDataService...");
+    this.clearCache();
+    this.initialized = false;
+    this.connectionStatus = {
+      isConnected: false,
+      lastCheck: null,
+      consecutiveErrors: 0,
+      backendVersion: "unknown",
+    };
   }
 }
 
 // Create and export singleton instance
 const institutionalDataService = new InstitutionalDataService();
-
-// Development helpers
-if (process.env.NODE_ENV === "development") {
-  window._dataService = institutionalDataService;
-  console.log("🐛 Debug helper available: window._dataService");
-  console.log("   Commands:");
-  console.log("   • window._dataService.testConnection()");
-  console.log("   • window._dataService.debugScreeningResponse()");
-  console.log("   • window._dataService.getServiceStatus()");
-  console.log("   • window._dataService.clearCache()");
-}
 
 export default institutionalDataService;
