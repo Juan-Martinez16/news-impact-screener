@@ -6,6 +6,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
 const dotenv = require("dotenv");
+const economicCalendarRouter = require("./routes/economicCalendar");
 
 // Load environment variables
 dotenv.config();
@@ -685,6 +686,96 @@ app.get(
 );
 
 // ============================================
+// ECONOMIC CALENDAR ROUTES
+// ============================================
+
+app.use("/api", economicCalendarRouter);
+
+// ============================================
+// ENHANCED NEWS ENDPOINT
+// ============================================
+
+app.get(
+  "/api/news/:symbol/detailed",
+  asyncHandler(async (req, res) => {
+    try {
+      const { symbol } = req.params;
+      console.log(`📰 Getting detailed news for ${symbol}...`);
+
+      if (!symbol) {
+        return res.status(400).json({
+          success: false,
+          error: "Symbol parameter required",
+        });
+      }
+
+      const startTime = Date.now();
+      let allNews = [];
+
+      // Try multiple news sources
+      const newsSources = [
+        () => getFinnhubNews(symbol),
+        () => getPolygonNews(symbol),
+        () => getFMPNews(symbol),
+      ];
+
+      for (const getNews of newsSources) {
+        try {
+          const newsData = await getNews();
+          if (newsData && newsData.length > 0) {
+            allNews.push(...newsData);
+          }
+        } catch (error) {
+          console.warn(`⚠️ News source failed for ${symbol}:`, error.message);
+        }
+      }
+
+      // Remove duplicates and enhance data
+      const uniqueNews = removeDuplicateNews(allNews);
+      const enhancedNews = enhanceNewsData(uniqueNews, symbol);
+
+      // Sort by relevance score and timestamp
+      const sortedNews = enhancedNews
+        .sort((a, b) => {
+          const scoreWeight = (b.relevanceScore || 0) - (a.relevanceScore || 0);
+          const timeWeight = new Date(b.timestamp) - new Date(a.timestamp);
+          return scoreWeight * 0.7 + timeWeight * 0.3;
+        })
+        .slice(0, 10); // Top 10 most relevant
+
+      const processingTime = Date.now() - startTime;
+
+      res.json({
+        success: true,
+        symbol: symbol.toUpperCase(),
+        articles: sortedNews,
+        metadata: {
+          totalArticles: sortedNews.length,
+          sources: [...new Set(sortedNews.map((a) => a.source))],
+          timeframe: "24h",
+          avgSentiment: calculateAverageSentiment(sortedNews),
+          avgRelevance: calculateAverageRelevance(sortedNews),
+          highImpactCount: sortedNews.filter((a) => a.impact === "HIGH").length,
+          processingTime: `${processingTime}ms`,
+        },
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error(
+        `❌ Detailed news analysis failed for ${req.params.symbol}:`,
+        error
+      );
+      res.status(500).json({
+        success: false,
+        error: "Failed to fetch detailed news",
+        message: error.message,
+        symbol: req.params.symbol,
+      });
+    }
+  })
+);
+
+// ============================================
 // HELPER FUNCTIONS
 // ============================================
 
@@ -713,6 +804,356 @@ function calculateNISS(stockData) {
     console.error("❌ NISS calculation error:", error);
     return 5; // Default neutral score
   }
+}
+
+// ============================================
+// NEWS HELPER FUNCTIONS
+// ============================================
+
+async function getFinnhubNews(symbol) {
+  if (!API_KEYS.FINNHUB) return [];
+
+  try {
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - 7); // Last 7 days
+    const toDate = new Date();
+
+    const fromStr = fromDate.toISOString().split("T")[0];
+    const toStr = toDate.toISOString().split("T")[0];
+
+    const url = `https://finnhub.io/api/v1/company-news?symbol=${symbol}&from=${fromStr}&to=${toStr}&token=${API_KEYS.FINNHUB}`;
+
+    const result = await makeApiCall(url, {}, "finnhub");
+
+    if (result.success && Array.isArray(result.data)) {
+      return result.data.slice(0, 20).map((article) => ({
+        id: article.id || Date.now() + Math.random(),
+        headline: article.headline || "No headline",
+        source: article.source || "Finnhub",
+        timestamp: new Date(article.datetime * 1000).toISOString(),
+        url: article.url || "#",
+        summary: article.summary || "",
+        category: article.category || "general",
+        related: article.related || symbol,
+        originalSource: "finnhub",
+      }));
+    }
+
+    return [];
+  } catch (error) {
+    console.error("❌ Finnhub news error:", error);
+    return [];
+  }
+}
+
+async function getPolygonNews(symbol) {
+  if (!API_KEYS.POLYGON) return [];
+
+  try {
+    const url = `https://api.polygon.io/v2/reference/news?ticker=${symbol}&limit=20&apikey=${API_KEYS.POLYGON}`;
+
+    const result = await makeApiCall(url, {}, "polygon");
+
+    if (result.success && result.data?.results) {
+      return result.data.results.map((article) => ({
+        id: article.id || Date.now() + Math.random(),
+        headline: article.title || "No headline",
+        source: article.publisher?.name || "Polygon",
+        timestamp: article.published_utc || new Date().toISOString(),
+        url: article.article_url || "#",
+        summary: article.description || "",
+        category: "market",
+        related: symbol,
+        originalSource: "polygon",
+      }));
+    }
+
+    return [];
+  } catch (error) {
+    console.error("❌ Polygon news error:", error);
+    return [];
+  }
+}
+
+async function getFMPNews(symbol) {
+  if (!API_KEYS.FMP) return [];
+
+  try {
+    const url = `https://financialmodelingprep.com/api/v3/stock_news?tickers=${symbol}&limit=20&apikey=${API_KEYS.FMP}`;
+
+    const result = await makeApiCall(url, {}, "fmp");
+
+    if (result.success && Array.isArray(result.data)) {
+      return result.data.map((article) => ({
+        id: Date.now() + Math.random(),
+        headline: article.title || "No headline",
+        source: article.site || "FMP",
+        timestamp: article.publishedDate || new Date().toISOString(),
+        url: article.url || "#",
+        summary: article.text ? article.text.substring(0, 200) + "..." : "",
+        category: "financial",
+        related: symbol,
+        originalSource: "fmp",
+      }));
+    }
+
+    return [];
+  } catch (error) {
+    console.error("❌ FMP news error:", error);
+    return [];
+  }
+}
+
+function removeDuplicateNews(newsArray) {
+  const seen = new Set();
+  return newsArray.filter((article) => {
+    // Create a unique key based on headline and source
+    const key = `${article.headline?.toLowerCase().slice(0, 50)}-${
+      article.source
+    }`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function enhanceNewsData(newsArray, symbol) {
+  return newsArray.map((article) => {
+    // Calculate relevance score
+    const relevanceScore = calculateNewsRelevance(article, symbol);
+
+    // Determine sentiment
+    const sentiment = analyzeNewsSentiment(
+      article.headline + " " + (article.summary || "")
+    );
+
+    // Determine impact level
+    const impact = determineNewsImpact(article, relevanceScore);
+
+    return {
+      ...article,
+      relevanceScore: Math.round(relevanceScore * 10) / 10,
+      sentiment,
+      impact,
+      enhancedAt: new Date().toISOString(),
+    };
+  });
+}
+
+function calculateNewsRelevance(article, symbol) {
+  let score = 5.0; // Base score
+
+  const headline = (article.headline || "").toLowerCase();
+  const summary = (article.summary || "").toLowerCase();
+  const content = headline + " " + summary;
+
+  // Symbol mention boost
+  if (content.includes(symbol.toLowerCase())) score += 2.0;
+
+  // High-impact keywords
+  const highImpactKeywords = [
+    "earnings",
+    "beats",
+    "misses",
+    "guidance",
+    "revenue",
+    "profit",
+    "acquisition",
+    "merger",
+    "buyout",
+    "ipo",
+    "dividend",
+    "fda approval",
+    "patent",
+    "breakthrough",
+    "partnership",
+    "ceo",
+    "leadership",
+    "resignation",
+    "appointment",
+  ];
+
+  highImpactKeywords.forEach((keyword) => {
+    if (content.includes(keyword)) score += 1.0;
+  });
+
+  // Medium-impact keywords
+  const mediumImpactKeywords = [
+    "upgrade",
+    "downgrade",
+    "rating",
+    "target",
+    "analyst",
+    "expansion",
+    "growth",
+    "investment",
+    "funding",
+    "contract",
+  ];
+
+  mediumImpactKeywords.forEach((keyword) => {
+    if (content.includes(keyword)) score += 0.5;
+  });
+
+  // Source credibility boost
+  const highCredibilitySources = [
+    "reuters",
+    "bloomberg",
+    "wsj",
+    "cnbc",
+    "marketwatch",
+    "financial times",
+    "barron's",
+    "seeking alpha",
+  ];
+
+  const source = (article.source || "").toLowerCase();
+  if (highCredibilitySources.some((credible) => source.includes(credible))) {
+    score += 1.0;
+  }
+
+  // Recency boost (newer articles get higher scores)
+  const articleAge = Date.now() - new Date(article.timestamp).getTime();
+  const hoursOld = articleAge / (1000 * 60 * 60);
+
+  if (hoursOld < 1) score += 1.5;
+  else if (hoursOld < 6) score += 1.0;
+  else if (hoursOld < 24) score += 0.5;
+
+  return Math.max(0, Math.min(10, score));
+}
+
+function analyzeNewsSentiment(text) {
+  if (!text) return "NEUTRAL";
+
+  const content = text.toLowerCase();
+
+  const bullishKeywords = [
+    "beats",
+    "exceeds",
+    "strong",
+    "growth",
+    "profit",
+    "gains",
+    "positive",
+    "upgrade",
+    "bullish",
+    "optimistic",
+    "success",
+    "outperform",
+    "record",
+    "high",
+    "boost",
+    "rally",
+  ];
+
+  const bearishKeywords = [
+    "misses",
+    "disappoints",
+    "weak",
+    "decline",
+    "loss",
+    "falls",
+    "negative",
+    "downgrade",
+    "bearish",
+    "pessimistic",
+    "concern",
+    "underperform",
+    "low",
+    "pressure",
+    "drop",
+    "crash",
+  ];
+
+  const bullishCount = bullishKeywords.reduce(
+    (count, keyword) => count + (content.includes(keyword) ? 1 : 0),
+    0
+  );
+  const bearishCount = bearishKeywords.reduce(
+    (count, keyword) => count + (content.includes(keyword) ? 1 : 0),
+    0
+  );
+
+  if (bullishCount > bearishCount + 1) return "BULLISH";
+  if (bearishCount > bullishCount + 1) return "BEARISH";
+  return "NEUTRAL";
+}
+
+function determineNewsImpact(article, relevanceScore) {
+  const headline = (article.headline || "").toLowerCase();
+
+  // High impact events
+  const highImpactTerms = [
+    "earnings",
+    "acquisition",
+    "merger",
+    "fda approval",
+    "bankruptcy",
+    "lawsuit",
+    "ceo",
+    "guidance",
+  ];
+
+  if (
+    highImpactTerms.some((term) => headline.includes(term)) ||
+    relevanceScore >= 8
+  ) {
+    return "HIGH";
+  }
+
+  // Medium impact events
+  const mediumImpactTerms = [
+    "analyst",
+    "upgrade",
+    "downgrade",
+    "partnership",
+    "contract",
+    "expansion",
+    "investment",
+  ];
+
+  if (
+    mediumImpactTerms.some((term) => headline.includes(term)) ||
+    relevanceScore >= 6
+  ) {
+    return "MEDIUM";
+  }
+
+  return "LOW";
+}
+
+function calculateAverageSentiment(articles) {
+  if (!articles.length) return "NEUTRAL";
+
+  const sentimentScores = articles.map((article) => {
+    switch (article.sentiment) {
+      case "BULLISH":
+        return 1;
+      case "BEARISH":
+        return -1;
+      default:
+        return 0;
+    }
+  });
+
+  const avgScore =
+    sentimentScores.reduce((sum, score) => sum + score, 0) /
+    sentimentScores.length;
+
+  if (avgScore > 0.3) return "BULLISH";
+  if (avgScore < -0.3) return "BEARISH";
+  return "NEUTRAL";
+}
+
+function calculateAverageRelevance(articles) {
+  if (!articles.length) return 0;
+
+  const totalRelevance = articles.reduce(
+    (sum, article) => sum + (article.relevanceScore || 0),
+    0
+  );
+  return Math.round((totalRelevance / articles.length) * 10) / 10;
 }
 
 // ============================================
