@@ -1,5 +1,5 @@
-// src/components/NewsImpactScreener.js - v4.1.0-fixed
-// UPDATED - Added error boundaries and improved tab switching
+// src/components/NewsImpactScreener.js - v4.2.0-enhanced-ui
+// UPDATED - Enhanced UX/UI with brand integration and improved header design
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
@@ -14,13 +14,13 @@ import {
 import StockScreener from "./StockScreener";
 import CatalystAnalysisTab from "./CatalystAnalysisTab";
 import PerformanceTrackingTab from "./PerformanceTrackingTab";
-import ErrorBoundary from "./ErrorBoundary"; // NEW: Error boundary component
+import ErrorBoundary from "./ErrorBoundary";
 
 // Import the fixed data service
 import InstitutionalDataService from "../api/InstitutionalDataService";
 
 const NewsImpactScreener = () => {
-  console.log("🚀 NewsImpactScreener v4.1.0-fixed starting...");
+  console.log("🚀 NewsImpactScreener v4.2.0-enhanced-ui starting...");
 
   // Refs to prevent duplicate operations
   const loadingRef = useRef(false);
@@ -248,23 +248,47 @@ const NewsImpactScreener = () => {
   // RENDER HELPERS
   // ============================================
 
+  // Enhanced JM Trading Services Logo Component
+  const JMLogo = () => (
+    <div className="flex flex-col items-center justify-center">
+      <div
+        className="text-center"
+        style={{
+          background: "linear-gradient(135deg, #1e40af 0%, #3b82f6 100%)",
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
+          backgroundClip: "text",
+        }}
+      >
+        <div className="text-2xl font-bold leading-none mb-1">JM</div>
+        <div className="text-xs font-semibold tracking-wider leading-none mb-1">
+          TRADING
+        </div>
+        <div className="text-xs font-semibold tracking-wider leading-none">
+          SERVICES
+        </div>
+      </div>
+    </div>
+  );
+
+  // Simplified connection status
   const renderConnectionStatus = () => {
-    const { connected, version, backendUrl } = serviceStatus;
+    const { connected } = serviceStatus;
 
     return (
-      <div className="flex items-center space-x-2 text-sm">
-        {connected ? (
-          <>
-            <Wifi className="w-4 h-4 text-green-600" />
-            <span className="text-green-600">Connected v{version}</span>
-          </>
-        ) : (
-          <>
-            <WifiOff className="w-4 h-4 text-red-600" />
-            <span className="text-red-600">Disconnected</span>
-          </>
-        )}
-        <span className="text-gray-500">({backendUrl})</span>
+      <div className="flex items-center space-x-2">
+        <div
+          className={`w-2 h-2 rounded-full ${
+            connected ? "bg-green-500" : "bg-red-500"
+          }`}
+        ></div>
+        <span
+          className={`text-sm font-medium ${
+            connected ? "text-green-600" : "text-red-600"
+          }`}
+        >
+          {connected ? "Online" : "Offline"}
+        </span>
       </div>
     );
   };
@@ -283,7 +307,7 @@ const NewsImpactScreener = () => {
             key={tab.id}
             onClick={() => handleTabChange(tab.id)}
             disabled={loading}
-            className={`flex-1 flex items-center justify-center space-x-2 py-2 px-4 rounded-md text-sm font-medium transition-all ${
+            className={`flex-1 flex items-center justify-center space-x-2 py-3 px-4 rounded-md text-sm font-medium transition-all ${
               activeTab === tab.id
                 ? "bg-white text-blue-600 shadow-sm"
                 : "text-gray-600 hover:text-gray-900 hover:bg-gray-200"
@@ -355,80 +379,100 @@ const NewsImpactScreener = () => {
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-6">
-      {/* Header */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              News Impact Screener
-            </h1>
-            <p className="text-gray-600">
-              Enhanced 6-component NISS analysis with institutional-grade data
-            </p>
-          </div>
+      {/* Enhanced Header */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="bg-gradient-to-r from-gray-50 to-blue-50 px-6 py-4">
+          <div className="flex items-center justify-between">
+            {/* Left side: Logo and Title */}
+            <div className="flex items-center space-x-6">
+              <JMLogo />
+              <div className="h-12 w-px bg-gray-300"></div>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900 leading-tight">
+                  News Impact Screener
+                </h1>
+              </div>
+            </div>
 
-          <div className="flex items-center space-x-4">
-            {renderConnectionStatus()}
-            <button
-              onClick={handleRefresh}
-              disabled={loading}
-              className={`flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors ${
-                loading ? "opacity-50 cursor-not-allowed" : ""
-              }`}
-            >
-              <RefreshCw
-                className={`w-4 h-4 ${loading ? "animate-spin" : ""}`}
-              />
-              <span>{loading ? "Loading..." : "Refresh"}</span>
-            </button>
+            {/* Right side: Status and Actions */}
+            <div className="flex items-center space-x-6">
+              {renderConnectionStatus()}
+              <button
+                onClick={handleRefresh}
+                disabled={loading}
+                className={`flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all duration-200 shadow-sm ${
+                  loading ? "opacity-50 cursor-not-allowed" : "hover:shadow-md"
+                }`}
+              >
+                <RefreshCw
+                  className={`w-4 h-4 ${loading ? "animate-spin" : ""}`}
+                />
+                <span className="font-medium">
+                  {loading ? "Loading..." : "Refresh"}
+                </span>
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Summary Stats */}
+        {/* Enhanced Summary Stats */}
         {screeningResults.length > 0 && (
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-blue-600">
-                {screeningResults.length}
+          <div className="px-6 py-4 bg-white border-t border-gray-100">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="text-center">
+                <div className="text-3xl font-bold text-blue-600 mb-1">
+                  {screeningResults.length}
+                </div>
+                <div className="text-sm text-gray-600 font-medium">
+                  Stocks Analyzed
+                </div>
               </div>
-              <div className="text-sm text-gray-600">Stocks Analyzed</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-green-600">
-                {
-                  screeningResults.filter((s) => s.sentiment === "BULLISH")
-                    .length
-                }
+              <div className="text-center">
+                <div className="text-3xl font-bold text-green-600 mb-1">
+                  {
+                    screeningResults.filter((s) => s.sentiment === "BULLISH")
+                      .length
+                  }
+                </div>
+                <div className="text-sm text-gray-600 font-medium">
+                  Bullish Signals
+                </div>
               </div>
-              <div className="text-sm text-gray-600">Bullish Signals</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-red-600">
-                {
-                  screeningResults.filter((s) => s.sentiment === "BEARISH")
-                    .length
-                }
+              <div className="text-center">
+                <div className="text-3xl font-bold text-red-600 mb-1">
+                  {
+                    screeningResults.filter((s) => s.sentiment === "BEARISH")
+                      .length
+                  }
+                </div>
+                <div className="text-sm text-gray-600 font-medium">
+                  Bearish Signals
+                </div>
               </div>
-              <div className="text-sm text-gray-600">Bearish Signals</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-purple-600">
-                {screeningResults.filter((s) => (s.nissScore || 0) >= 7).length}
+              <div className="text-center">
+                <div className="text-3xl font-bold text-purple-600 mb-1">
+                  {
+                    screeningResults.filter((s) => (s.nissScore || 0) >= 7)
+                      .length
+                  }
+                </div>
+                <div className="text-sm text-gray-600 font-medium">
+                  High Confidence
+                </div>
               </div>
-              <div className="text-sm text-gray-600">High Confidence</div>
             </div>
           </div>
         )}
       </div>
 
-      {/* Tab Navigation */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+      {/* Enhanced Tab Navigation */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
         {renderTabNavigation()}
       </div>
 
-      {/* Error Display */}
+      {/* Enhanced Error Display */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
           <div className="flex items-center space-x-2">
             <AlertCircle className="w-5 h-5 text-red-600" />
             <h3 className="text-red-800 font-medium">Error</h3>
@@ -444,14 +488,14 @@ const NewsImpactScreener = () => {
       )}
 
       {/* Active Tab Content */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 min-h-96">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 min-h-96">
         {renderActiveTab()}
       </div>
 
-      {/* Loading Overlay */}
+      {/* Enhanced Loading Overlay */}
       {loading && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-sm w-full mx-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl p-6 max-w-sm w-full mx-4 shadow-xl">
             <div className="flex items-center space-x-3">
               <RefreshCw className="w-6 h-6 animate-spin text-blue-600" />
               <div>

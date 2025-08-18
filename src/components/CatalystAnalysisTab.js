@@ -506,24 +506,10 @@ const CatalystAnalysisTab = ({
   // MAIN RENDER
   // ============================================
   return (
-    <div className="flex gap-6 h-full">
+    <div className="flex gap-6 h-full p-6">
       {/* Main Catalyst Analysis Panel */}
       <div className="flex-1 space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900">
-              Catalyst Analysis
-            </h2>
-            <p className="text-sm text-gray-600">
-              {catalystData.length} potential catalysts identified
-            </p>
-          </div>
-          <div className="flex items-center space-x-2 text-sm text-gray-500">
-            <Calendar className="w-4 h-4" />
-            <span>Next 1-3 days</span>
-          </div>
-        </div>
 
         {/* No Data State */}
         {catalystData.length === 0 && (
@@ -538,7 +524,6 @@ const CatalystAnalysisTab = ({
             </p>
           </div>
         )}
-
         {/* Catalyst Cards */}
         {catalystData.length > 0 && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -637,7 +622,6 @@ const CatalystAnalysisTab = ({
             ))}
           </div>
         )}
-
         {/* Summary Stats */}
         {catalystData.length > 0 && (
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">

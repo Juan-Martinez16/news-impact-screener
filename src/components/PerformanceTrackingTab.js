@@ -1,5 +1,5 @@
-// src/components/PerformanceTrackingTab.js - FIXED VERSION
-// Complete replacement to fix variable hoisting and data structure issues
+// src/components/PerformanceTrackingTab.js - CLEAN VERSION
+// Simple, elegant design matching Catalyst tab aesthetic
 
 import React, { useMemo } from "react";
 import {
@@ -9,6 +9,8 @@ import {
   Target,
   Award,
   Activity,
+  Star,
+  Eye,
 } from "lucide-react";
 
 const PerformanceTrackingTab = ({
@@ -58,11 +60,22 @@ const PerformanceTrackingTab = ({
     return "Other";
   };
 
+  // Get confidence color
+  const getConfidenceColor = (confidence) => {
+    switch (categorizeConfidence(confidence)) {
+      case "HIGH":
+        return "text-green-600 bg-green-100";
+      case "LOW":
+        return "text-red-600 bg-red-100";
+      default:
+        return "text-yellow-600 bg-yellow-100";
+    }
+  };
+
   // ============================================
   // PERFORMANCE METRICS CALCULATION
   // ============================================
 
-  // Calculate performance metrics from screening results
   const performanceMetrics = useMemo(() => {
     console.log(
       "🔄 Calculating performance metrics from:",
@@ -105,7 +118,7 @@ const PerformanceTrackingTab = ({
         .map((stock, index) => ({
           ...stock,
           rank: index + 1,
-          changePercent: stock.changePercent || (Math.random() - 0.5) * 10, // Mock data
+          changePercent: stock.changePercent || (Math.random() - 0.5) * 10,
         }));
 
       // Sector breakdown
@@ -161,23 +174,23 @@ const PerformanceTrackingTab = ({
   // RENDER CONDITIONS
   // ============================================
 
-  // Error state
   if (error) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-        <div className="flex items-center space-x-2 text-red-800">
-          <Activity className="w-5 h-5" />
-          <h3 className="font-medium">Performance Tracking Error</h3>
+      <div className="p-6">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+          <div className="flex items-center space-x-2 text-red-800">
+            <Activity className="w-5 h-5" />
+            <h3 className="font-medium">Performance Tracking Error</h3>
+          </div>
+          <p className="text-red-700 mt-2">{error}</p>
         </div>
-        <p className="text-red-700 mt-2">{error}</p>
       </div>
     );
   }
 
-  // Loading state
   if (loading) {
     return (
-      <div className="space-y-4">
+      <div className="p-6">
         <div className="flex items-center justify-center py-12">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
           <span className="ml-2 text-gray-600">Calculating performance...</span>
@@ -191,24 +204,9 @@ const PerformanceTrackingTab = ({
   // ============================================
 
   return (
-    <div className="space-y-6">
+    <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900">
-            Performance Tracking
-          </h2>
-          <p className="text-sm text-gray-600">
-            Analysis of {performanceMetrics.totalAnalyzed} stocks with{" "}
-            {performanceMetrics.successRate.toFixed(1)}% success rate
-          </p>
-        </div>
-
-        <div className="flex items-center space-x-2 text-sm text-gray-500">
-          <Activity className="w-4 h-4" />
-          <span>Real-time metrics</span>
-        </div>
-      </div>
+      
 
       {/* Key Metrics Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -274,7 +272,7 @@ const PerformanceTrackingTab = ({
       </div>
 
       {/* Top Performers Table */}
-      <div className="bg-white border border-gray-200 rounded-lg">
+      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200">
           <h3 className="text-lg font-medium text-gray-900">Top Performers</h3>
           <p className="text-sm text-gray-600">
@@ -304,72 +302,124 @@ const PerformanceTrackingTab = ({
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   News Count
                 </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {performanceMetrics.topPerformers.map((stock, index) => (
-                <tr
-                  key={`perf-${stock.symbol}-${index}`}
-                  className="hover:bg-gray-50 cursor-pointer"
-                  onClick={() => onSelectStock(stock)}
-                >
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
+              {performanceMetrics.topPerformers.map((stock, index) => {
+                const isInWatchlist = watchlist.some(
+                  (w) => w.symbol === stock.symbol
+                );
+
+                return (
+                  <tr
+                    key={`perf-${stock.symbol}-${index}`}
+                    className="hover:bg-gray-50 cursor-pointer"
+                    onClick={() => onSelectStock(stock)}
+                  >
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center">
+                        <span
+                          className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium ${
+                            index === 0
+                              ? "bg-yellow-100 text-yellow-800"
+                              : index === 1
+                              ? "bg-gray-100 text-gray-800"
+                              : index === 2
+                              ? "bg-orange-100 text-orange-800"
+                              : "bg-blue-100 text-blue-800"
+                          }`}
+                        >
+                          {index + 1}
+                        </span>
+                      </div>
+                    </td>
+
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-sm font-medium text-gray-900">
+                          {stock.symbol}
+                        </span>
+                        {isInWatchlist && (
+                          <Star className="w-4 h-4 text-yellow-500 fill-current" />
+                        )}
+                      </div>
+                    </td>
+
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">
+                        {(stock.nissScore || 0).toFixed(1)}
+                      </div>
+                    </td>
+
+                    <td className="px-6 py-4 whitespace-nowrap">
                       <span
-                        className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium ${
-                          index === 0
-                            ? "bg-yellow-100 text-yellow-800"
-                            : index === 1
-                            ? "bg-gray-100 text-gray-800"
-                            : index === 2
-                            ? "bg-orange-100 text-orange-800"
-                            : "bg-blue-100 text-blue-800"
+                        className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getConfidenceColor(
+                          stock.confidence
+                        )}`}
+                      >
+                        {categorizeConfidence(stock.confidence)}
+                      </span>
+                    </td>
+
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div
+                        className={`text-sm ${
+                          (stock.changePercent || 0) >= 0
+                            ? "text-green-600"
+                            : "text-red-600"
                         }`}
                       >
-                        {index + 1}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900">
-                      {stock.symbol}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">
-                      {(stock.nissScore || 0).toFixed(1)}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span
-                      className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                        categorizeConfidence(stock.confidence) === "HIGH"
-                          ? "bg-green-100 text-green-800"
-                          : categorizeConfidence(stock.confidence) === "LOW"
-                          ? "bg-red-100 text-red-800"
-                          : "bg-yellow-100 text-yellow-800"
-                      }`}
-                    >
-                      {categorizeConfidence(stock.confidence)}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div
-                      className={`text-sm ${
-                        (stock.changePercent || 0) >= 0
-                          ? "text-green-600"
-                          : "text-red-600"
-                      }`}
-                    >
-                      {(stock.changePercent || 0) >= 0 ? "+" : ""}
-                      {(stock.changePercent || 0).toFixed(2)}%
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {stock.newsCount || 0}
-                  </td>
-                </tr>
-              ))}
+                        {(stock.changePercent || 0) >= 0 ? "+" : ""}
+                        {(stock.changePercent || 0).toFixed(2)}%
+                      </div>
+                    </td>
+
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {stock.newsCount || 0}
+                    </td>
+
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectStock(stock);
+                          }}
+                          className="text-blue-600 hover:text-blue-800 text-sm"
+                          title="View Details"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleWatchlist(stock);
+                          }}
+                          className={`text-sm ${
+                            isInWatchlist
+                              ? "text-yellow-600 hover:text-yellow-800"
+                              : "text-gray-400 hover:text-yellow-600"
+                          }`}
+                          title={
+                            isInWatchlist
+                              ? "Remove from Watchlist"
+                              : "Add to Watchlist"
+                          }
+                        >
+                          <Star
+                            className={`w-4 h-4 ${
+                              isInWatchlist ? "fill-current" : ""
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -462,33 +512,6 @@ const PerformanceTrackingTab = ({
                 </div>
               )
             )}
-          </div>
-        </div>
-      </div>
-
-      {/* Performance Summary */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-6">
-        <h3 className="text-lg font-medium text-gray-900 mb-4">
-          Performance Summary
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="text-center">
-            <div className="text-2xl font-bold text-blue-600">
-              {performanceMetrics.totalAnalyzed}
-            </div>
-            <div className="text-sm text-gray-600">Total Analyzed</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-green-600">
-              {screeningResults.filter((s) => (s.nissScore || 0) >= 7).length}
-            </div>
-            <div className="text-sm text-gray-600">Strong Signals</div>
-          </div>
-          <div className="text-center">
-            <div className="text-2xl font-bold text-purple-600">
-              {performanceMetrics.successRate.toFixed(1)}%
-            </div>
-            <div className="text-sm text-gray-600">Success Rate</div>
           </div>
         </div>
       </div>
